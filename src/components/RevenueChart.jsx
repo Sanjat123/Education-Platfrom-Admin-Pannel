@@ -1,39 +1,115 @@
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { motion } from 'framer-motion';
+// RevenueChart.jsx - Updated component
+import React from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Area,
+  AreaChart,
+  ReferenceLine
+} from "recharts";
 
-const data = [
-  { month: 'Jan', revenue: 4000 },
-  { month: 'Feb', revenue: 3000 },
-  { month: 'Mar', revenue: 5000 },
-  { month: 'Apr', revenue: 4500 },
-  { month: 'May', revenue: 6000 },
-  { month: 'Jun', revenue: 5500 },
-];
+const RevenueChart = ({ revenueData = [], showTarget = false, targetAmount = 0 }) => {
+  // If no data from Firestore, use mock data
+  const data = revenueData.length > 0 ? revenueData : [
+    { month: "Jan", revenue: 4000 },
+    { month: "Feb", revenue: 3000 },
+    { month: "Mar", revenue: 5000 },
+    { month: "Apr", revenue: 2780 },
+    { month: "May", revenue: 1890 },
+    { month: "Jun", revenue: 2390 },
+    { month: "Jul", revenue: 3490 },
+  ];
 
-export default function RevenueChart() {
+  const maxRevenue = Math.max(...data.map(d => d.revenue), targetAmount);
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 rounded-lg shadow-lg border">
+          <p className="text-sm font-medium text-gray-700">{label}</p>
+          <p className="text-sm text-[#0fa3ab]">
+            Revenue: ₹{payload[0].value.toLocaleString()}
+          </p>
+          {showTarget && (
+            <p className="text-sm text-purple-500 mt-1">
+              Target: ₹{targetAmount.toLocaleString()}
+            </p>
+          )}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5 }}
-      className="p-6 rounded-xl backdrop-blur-md bg-cybercard/80 border border-neonblue/30 shadow-neon"
-    >
-      <h3 className="text-lg font-semibold text-white mb-4">Monthly Revenue</h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-          <XAxis dataKey="month" stroke="#9ca3af" />
-          <YAxis stroke="#9ca3af" />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: '#12121a',
-              border: '1px solid #00f6ff',
-              borderRadius: '8px',
-            }}
+    <div className="w-full h-72">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart
+          data={data}
+          margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+        >
+          <defs>
+            <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#0fa3ab" stopOpacity={0.8} />
+              <stop offset="95%" stopColor="#0fa3ab" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis 
+            dataKey="month" 
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: '#64748b', fontSize: 12 }}
           />
-          <Bar dataKey="revenue" fill="#00f6ff" radius={[4, 4, 0, 0]} />
-        </BarChart>
+          <YAxis 
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: '#64748b', fontSize: 12 }}
+            tickFormatter={(value) => `₹${value/1000}k`}
+            domain={[0, maxRevenue * 1.1]}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <Area
+            type="monotone"
+            dataKey="revenue"
+            stroke="#0fa3ab"
+            strokeWidth={2}
+            fill="url(#colorRevenue)"
+            activeDot={{ r: 6, fill: "#088a54" }}
+          />
+          
+          {showTarget && (
+            <ReferenceLine
+              y={targetAmount}
+              stroke="purple"
+              strokeDasharray="3 3"
+              strokeWidth={1.5}
+              label={{
+                value: `Target: ₹${targetAmount.toLocaleString()}`,
+                position: 'right',
+                fill: 'purple',
+                fontSize: 12
+              }}
+            />
+          )}
+          
+          <Line
+            type="monotone"
+            dataKey="revenue"
+            stroke="#088a54"
+            strokeWidth={2}
+            dot={{ fill: "#088a54", r: 4 }}
+            activeDot={{ r: 6 }}
+          />
+        </AreaChart>
       </ResponsiveContainer>
-    </motion.div>
+    </div>
   );
-}
+};
+
+export default RevenueChart;

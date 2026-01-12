@@ -1,33 +1,48 @@
-import { Routes, Route } from "react-router-dom";
-import Sidebar from "./components/Sidebar";
-import Navbar from "./components/Navbar";
-
+import { Routes, Route, Navigate } from "react-router-dom";
+import { useAuth } from "./context/AuthContext";
+import AdminLayout from "./layouts/AdminLayout";
 import Dashboard from "./pages/Dashboard";
-import Teachers from "./pages/Teachers";
+import Login from "./pages/Login";
 import Students from "./pages/Students";
 import Courses from "./pages/Courses";
-import LiveClasses from "./pages/LiveClasses";
+import ManageLectures from "./pages/ManageLectures"; 
+import Teachers from "./pages/Teachers";
 import Payments from "./pages/Payments";
+import LiveClasses from "./pages/LiveClasses"; // Naya import
 
-export default function App() {
+const ProtectedRoute = ({ children }) => {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" />;
+  return children;
+};
+
+function App() {
   return (
-    <div className="flex bg-[#0a0a0f] text-white min-h-screen">
-      <Sidebar />
+    <Routes>
+      <Route path="/login" element={<Login />} />
 
-      <div className="flex-1">
-        <Navbar />
+      <Route 
+        path="/" 
+        element={
+          <ProtectedRoute>
+            <AdminLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Dashboard />} />
+        <Route path="students" element={<Students />} />
+        <Route path="teachers" element={<Teachers />} /> 
+        <Route path="courses" element={<Courses />} />
+        <Route path="courses/manage/:courseId" element={<ManageLectures />} />
+        <Route path="payments" element={<Payments />} />
+        
+        {/* Live Classes Route */}
+        <Route path="live" element={<LiveClasses />} />
+      </Route>
 
-        <div className="p-6">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/teachers" element={<Teachers />} />
-            <Route path="/students" element={<Students />} />
-            <Route path="/courses" element={<Courses />} />
-            <Route path="/live-classes" element={<LiveClasses />} />
-            <Route path="/payments" element={<Payments />} />
-          </Routes>
-        </div>
-      </div>
-    </div>
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
   );
 }
+
+export default App;

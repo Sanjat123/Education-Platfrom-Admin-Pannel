@@ -10,10 +10,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@zegocloud/zego-uikit-prebuilt": "^2.17.2",
+    "date-fns": "^4.1.0",
+    "firebase": "^12.7.0",
     "framer-motion": "^12.25.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-hot-toast": "^2.6.0",
+    "react-icons": "^5.5.0",
     "react-router-dom": "^7.12.0",
     "recharts": "^3.6.0"
   },

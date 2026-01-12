@@ -1,12 +1,45 @@
-.shadow-neon {
-  box-shadow: 0 0 20px rgba(0, 246, 255, 0.35);
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary: #0ea5e9;
+    --primary-dark: #036374;
+    --slate-950: #020617;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
 }
 
-.bg-cybercard {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
+@layer components {
+  /* Modern Glassmorphism for Login Card */
+  .auth-glass {
+    @apply bg-white/5 backdrop-blur-2xl border border-white/10 shadow-2xl;
+  }
+
+  /* Professional Input Styling */
+  .input-auth {
+    @apply w-full bg-white/5 border border-white/10 p-4 rounded-2xl text-white 
+           outline-none transition-all duration-300 placeholder:text-slate-500
+           focus:border-sky-500/50 focus:ring-4 focus:ring-sky-500/10;
+  }
+
+  /* Premium Button */
+  .btn-primary {
+    @apply flex items-center justify-center gap-2 bg-sky-500 text-white px-6 py-4 
+           rounded-2xl font-bold transition-all duration-300 hover:bg-sky-400 
+           active:scale-95 shadow-lg shadow-sky-500/20;
+  }
 }
 
-.border-cyberborder {
-  border-color: rgba(255, 255, 255, 0.08);
+/* Custom Animations */
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-auth-entry {
+  animation: fadeInScale 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
