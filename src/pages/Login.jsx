@@ -7,9 +7,9 @@ import {
   PhoneAuthProvider,
   signInWithCredential,
   sendPasswordResetEmail,
-  updatePassword,
-  reauthenticateWithCredential,
-  EmailAuthProvider
+  GoogleAuthProvider,
+  GithubAuthProvider,
+  signInWithPopup
 } from "firebase/auth";
 import { doc, getDoc, collection, query, where, getDocs, updateDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
@@ -18,14 +18,16 @@ import {
   FiMail, FiLock, FiSmartphone, FiArrowLeft, FiUser, FiShield,
   FiBookOpen, FiEye, FiEyeOff, FiCheckCircle, FiXCircle, FiRefreshCw,
   FiKey, FiLogIn, FiClock, FiHelpCircle, FiAlertCircle, FiGlobe,
-  FiMessageSquare, FiSend, FiHome, FiUsers, FiTrendingUp
+  FiMessageSquare, FiSend, FiHome, FiUsers, FiTrendingUp,
+  FiGithub, FiFacebook, FiTwitter
 } from "react-icons/fi";
+import { FcGoogle } from "react-icons/fc";
 import toast, { Toaster } from "react-hot-toast";
 
 const Login = () => {
   const [selectedRole, setSelectedRole] = useState(null); 
   const [step, setStep] = useState("selection");
-  const [authMethod, setAuthMethod] = useState("phone"); // 'phone' or 'email' or 'password'
+  const [authMethod, setAuthMethod] = useState("phone"); // 'phone', 'email', 'password', 'google', 'github'
   
   // Form states
   const [email, setEmail] = useState("");
@@ -42,6 +44,7 @@ const Login = () => {
   const [resendTimer, setResendTimer] = useState(0);
   const [rememberMe, setRememberMe] = useState(false);
   const [forgotPassword, setForgotPassword] = useState(false);
+  const [loginMode, setLoginMode] = useState("login"); // 'login' or 'register' for students
   
   const navigate = useNavigate();
 
@@ -87,11 +90,18 @@ const Login = () => {
           color: "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
         },
         { 
-          id: "student-id", 
-          label: "Student ID", 
-          icon: <FiUser className="text-cyan-500" />,
-          desc: "Student ID authentication",
-          color: "bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100"
+          id: "google", 
+          label: "Google", 
+          icon: <FcGoogle className="text-gray-800" />,
+          desc: "Login with Google",
+          color: "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+        },
+        { 
+          id: "github", 
+          label: "GitHub", 
+          icon: <FiGithub className="text-gray-800" />,
+          desc: "Login with GitHub",
+          color: "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
         }
       ],
       quickInfo: "Start learning today",
@@ -134,10 +144,10 @@ const Login = () => {
           color: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
         },
         { 
-          id: "faculty-id", 
-          label: "Faculty ID", 
-          icon: <FiKey className="text-green-500" />,
-          desc: "Requires admin approval",
+          id: "email", 
+          label: "Email Login", 
+          icon: <FiMail className="text-green-500" />,
+          desc: "Email & password access",
           color: "bg-green-50 text-green-700 border-green-200 hover:bg-green-100"
         }
       ],
@@ -180,13 +190,6 @@ const Login = () => {
           icon: <FiKey className="text-slate-700" />,
           desc: "Advanced security",
           color: "bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200"
-        },
-        { 
-          id: "2fa", 
-          label: "2FA Required", 
-          icon: <FiLock className="text-gray-600" />,
-          desc: "Two-factor authentication",
-          color: "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"
         }
       ],
       quickInfo: "Restricted access only",
@@ -347,6 +350,69 @@ const Login = () => {
     }
   };
 
+  const handleEmailPasswordLogin = async (e) => {
+    e?.preventDefault();
+    setLoading(true);
+    
+    try {
+      if (!email || !password) {
+        throw new Error("Please enter both email and password");
+      }
+
+      const userCred = await signInWithEmailAndPassword(auth, email, password);
+      await handleSuccessfulLogin(userCred.user);
+      
+    } catch (err) {
+      console.error("Login error:", err);
+      
+      if (err.code === "auth/user-not-found") {
+        toast.error("No account found with this email");
+      } else if (err.code === "auth/wrong-password") {
+        toast.error("Incorrect password");
+      } else if (err.code === "auth/too-many-requests") {
+        toast.error("Too many failed attempts. Try again later.");
+      } else {
+        toast.error(err.message || "Login failed");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSocialLogin = async (providerType) => {
+    setLoading(true);
+    
+    try {
+      let provider;
+      
+      if (providerType === 'google') {
+        provider = new GoogleAuthProvider();
+        // Add scopes if needed
+        provider.addScope('profile');
+        provider.addScope('email');
+      } else if (providerType === 'github') {
+        provider = new GithubAuthProvider();
+        provider.addScope('user:email');
+      }
+      
+      const result = await signInWithPopup(auth, provider);
+      await handleSuccessfulLogin(result.user);
+      
+    } catch (err) {
+      console.error("Social login error:", err);
+      
+      if (err.code === "auth/popup-closed-by-user") {
+        toast.error("Login popup was closed");
+      } else if (err.code === "auth/account-exists-with-different-credential") {
+        toast.error("Account already exists with different login method");
+      } else {
+        toast.error(err.message || "Social login failed");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -381,6 +447,45 @@ const Login = () => {
       const userDoc = await getDoc(doc(db, "users", user.uid));
       
       if (!userDoc.exists()) {
+        // For social login, create user profile if it doesn't exist
+        if (selectedRole === "student" && (authMethod === 'google' || authMethod === 'github')) {
+          // Create student profile in Firestore
+          await updateDoc(doc(db, "users", user.uid), {
+            name: user.displayName || email.split('@')[0],
+            email: user.email,
+            phone: user.phoneNumber || "",
+            role: "student",
+            createdAt: new Date().toISOString(),
+            loginMethod: authMethod,
+            lastLogin: new Date().toISOString(),
+            socialProvider: authMethod
+          });
+          
+          // Show success toast
+          toast.custom((t) => (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white p-4 rounded-2xl shadow-xl border border-slate-200 max-w-md"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-gradient-to-br from-green-50 to-emerald-50">
+                  <FiCheckCircle className="text-emerald-600 text-xl" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Welcome, {user.displayName || email.split('@')[0]}!</h3>
+                  <p className="text-slate-600 text-sm">Account created successfully! Redirecting...</p>
+                </div>
+              </div>
+            </motion.div>
+          ));
+          
+          setTimeout(() => {
+            navigate("/student");
+          }, 1500);
+          return;
+        }
+        
         throw new Error("User profile not found");
       }
       
@@ -427,7 +532,7 @@ const Login = () => {
 
       // Navigate based on role
       setTimeout(() => {
-        if (selectedRole === "admin") navigate("/admin");
+        if (selectedRole === "admin") navigate("/"); // YAHAN PAR UPDATE KIYA GAYA: /admin se /
         else if (selectedRole === "teacher") navigate("/faculty");
         else navigate("/student");
       }, 1500);
@@ -435,7 +540,7 @@ const Login = () => {
     } catch (err) {
       console.error("Login verification error:", err);
       await auth.signOut();
-      throw err;
+      toast.error(err.message || "Login failed");
     }
   };
 
@@ -472,12 +577,44 @@ const Login = () => {
     setAuthMethod("phone");
     setForgotPassword(false);
     setRememberMe(false);
+    setLoginMode("login");
   };
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleStudentRegistration = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    try {
+      if (!email || !password) {
+        throw new Error("Please enter email and password");
+      }
+      
+      if (password.length < 6) {
+        throw new Error("Password must be at least 6 characters");
+      }
+
+      // Create user with email/password
+      const userCred = await signInWithEmailAndPassword(auth, email, password).catch(async () => {
+        // If user doesn't exist, create one
+        // Note: In a real app, you'd use createUserWithEmailAndPassword
+        // For now, we'll show a message
+        throw new Error("Registration requires backend setup. Please use social login or contact admin.");
+      });
+      
+      await handleSuccessfulLogin(userCred.user);
+      
+    } catch (err) {
+      console.error("Registration error:", err);
+      toast.error(err.message || "Registration failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -531,17 +668,28 @@ const Login = () => {
             <motion.div 
               animate={{ rotate: 360 }}
               transition={{ repeat: Infinity, duration: 20, ease: "linear" }}
-              className="absolute -inset-4 border-4 border-red-200/50 rounded-3xl"
+              className="absolute -inset-4 border-4 from-red-600 to-rose-500 rounded-3xl"
             />
-            <div className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-br from-red-600 to-rose-500 rounded-3xl flex items-center justify-center text-white text-4xl md:text-5xl font-black italic shadow-2xl">
-              N
-            </div>
+           <div className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-br 3xl flex items-center justify-center text-white text-4xl md:text-5xl font-black italic shadow-2xl overflow-hidden">
+  {/* Replace 'N' with image */}
+  <img 
+    src="/src/assets/logo.png"  // Adjust the path to your logo image
+    alt="Student Nagari Logo"
+    className="w-full h-full object-cover p-2"  
+    onError={(e) => {
+      // Fallback if image fails to load
+      e.target.style.display = 'none';
+      e.target.parentElement.innerHTML = 'N';
+    }}
+  />
+</div>
+            
           </div>
           <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 tracking-tighter uppercase mb-2">
             STUDENT <span className="text-red-600">NAGARI</span>
           </h1>
           <p className="text-slate-500 text-lg md:text-xl font-medium">
-            Unified Education Portal
+           All-in-One Education Platform-Smart Hub
           </p>
           <div className="flex items-center justify-center gap-4 mt-4 text-sm text-slate-400">
             <span className="flex items-center gap-1">
@@ -585,6 +733,8 @@ const Login = () => {
                     if (role.id === 'admin') {
                       setAuthMethod('password');
                     } else if (role.id === 'teacher') {
+                      setAuthMethod('phone');
+                    } else {
                       setAuthMethod('phone');
                     }
                   }}
@@ -693,10 +843,12 @@ const Login = () => {
 
               <div className="px-8 pb-8">
                 <h2 className="text-2xl md:text-3xl font-black text-slate-900 text-center mb-2">
-                  Welcome Back
+                  {selectedRole === 'student' && loginMode === 'register' ? 'Create Account' : 'Welcome Back'}
                 </h2>
                 <p className="text-slate-500 text-center mb-8">
-                  Sign in to your {selectedRole} account
+                  {selectedRole === 'student' && loginMode === 'register' 
+                    ? 'Join thousands of students learning online' 
+                    : `Sign in to your ${selectedRole} account`}
                 </p>
 
                 {forgotPassword ? (
@@ -853,187 +1005,249 @@ const Login = () => {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-6"
                   >
-                    {/* Auth Method Selector (for students) */}
-                    {selectedRole === 'student' && (
-                      <div className="flex border border-slate-200 rounded-xl p-1">
-                        {roles.find(r => r.id === 'student')?.authMethods.map((method) => (
+                    {/* Student Login/Register Toggle */}
+                    {selectedRole === 'student' && authMethod === 'email' && (
+                      <div className="flex border border-slate-200 rounded-xl p-1 bg-slate-50">
+                        <button
+                          type="button"
+                          onClick={() => setLoginMode('login')}
+                          className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${loginMode === 'login' 
+                            ? 'bg-white text-slate-900 shadow-sm' 
+                            : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          Login
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLoginMode('register')}
+                          className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${loginMode === 'register' 
+                            ? 'bg-white text-slate-900 shadow-sm' 
+                            : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          Register
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Auth Method Selector (for students and teachers) */}
+                    {(selectedRole === 'student' || selectedRole === 'teacher') && (
+                      <div className="flex flex-wrap gap-2 justify-center">
+                        {roles.find(r => r.id === selectedRole)?.authMethods.map((method) => (
                           <button
                             key={method.id}
                             type="button"
                             onClick={() => setAuthMethod(method.id)}
-                            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${authMethod === method.id 
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${authMethod === method.id 
                               ? 'bg-slate-900 text-white' 
-                              : 'text-slate-600 hover:text-slate-900'}`}
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                           >
+                            {method.icon}
                             {method.label}
                           </button>
                         ))}
                       </div>
                     )}
 
-                    {/* Login Form */}
-                    <form onSubmit={authMethod === 'password' ? handleAdminLogin : sendOTP}>
-                      {authMethod === 'phone' ? (
-                        /* PHONE OTP FORM */
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Phone Number</label>
-                            <div className="relative">
-                              <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                                <span className="font-bold text-slate-700">+91</span>
-                                <span className="text-slate-300">|</span>
+                    {/* Social Login Buttons (Students only) */}
+                    {selectedRole === 'student' && (authMethod === 'google' || authMethod === 'github') ? (
+                      <div className="space-y-4">
+                        <div className="text-center">
+                          <p className="text-slate-600 mb-4">Login with your social account</p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              onClick={() => handleSocialLogin('google')}
+                              disabled={loading}
+                              className="flex items-center justify-center gap-3 p-3 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            >
+                              <FcGoogle className="text-xl" />
+                              <span className="font-medium">Google</span>
+                            </button>
+                            <button
+                              onClick={() => handleSocialLogin('github')}
+                              disabled={loading}
+                              className="flex items-center justify-center gap-3 p-3 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            >
+                              <FiGithub className="text-xl" />
+                              <span className="font-medium">GitHub</span>
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-4">
+                            By continuing, you agree to our Terms & Privacy Policy
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Regular Login Form */
+                      <form onSubmit={
+                        selectedRole === 'admin' ? handleAdminLogin : 
+                        authMethod === 'password' ? handleEmailPasswordLogin :
+                        authMethod === 'email' && selectedRole === 'student' && loginMode === 'register' ? handleStudentRegistration :
+                        authMethod === 'email' ? handleEmailPasswordLogin :
+                        sendOTP
+                      }>
+                        {authMethod === 'phone' ? (
+                          /* PHONE OTP FORM */
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-slate-700">Phone Number</label>
+                              <div className="relative">
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                  <span className="font-bold text-slate-700">+91</span>
+                                  <span className="text-slate-300">|</span>
+                                </div>
+                                <input 
+                                  type="tel"
+                                  inputMode="numeric"
+                                  required
+                                  maxLength={10}
+                                  placeholder="9876543210"
+                                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-20 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                  value={phone}
+                                  onChange={(e) => {
+                                    const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                                    setPhone(value);
+                                  }}
+                                />
                               </div>
-                              <input 
-                                type="tel"
-                                inputMode="numeric"
-                                required
-                                maxLength={10}
-                                placeholder="9876543210"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-20 rounded-xl outline-none focus:border-blue-500/30 font-medium"
-                                value={phone}
-                                onChange={(e) => {
-                                  const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                                  setPhone(value);
-                                }}
-                              />
-                            </div>
-                            <p className="text-xs text-slate-500">
-                              Enter the phone number registered with your {selectedRole} account
-                            </p>
-                          </div>
-                        </div>
-                      ) : authMethod === 'email' ? (
-                        /* STUDENT EMAIL/PASSWORD FORM */
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Email Address</label>
-                            <div className="relative">
-                              <input 
-                                type="email"
-                                required
-                                placeholder="student@example.com"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                              />
-                              <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                              <p className="text-xs text-slate-500">
+                                Enter the phone number registered with your {selectedRole} account
+                              </p>
                             </div>
                           </div>
-                          
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Password</label>
-                            <div className="relative">
-                              <input 
-                                type={showPassword ? "text" : "password"}
-                                required
-                                placeholder="Enter your password"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 pr-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                              />
-                              <FiLock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                              <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                              >
-                                {showPassword ? <FiEyeOff /> : <FiEye />}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        /* ADMIN EMAIL/PASSWORD FORM */
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Admin Email</label>
-                            <div className="relative">
-                              <input 
-                                type="email"
-                                required
-                                placeholder="admin@studentnagari.com"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-slate-900/30 font-medium"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                              />
-                              <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                            </div>
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Password</label>
-                            <div className="relative">
-                              <input 
-                                type={showPassword ? "text" : "password"}
-                                required
-                                placeholder="Enter admin password"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 pr-12 rounded-xl outline-none focus:border-slate-900/30 font-medium"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                              />
-                              <FiLock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                              <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                              >
-                                {showPassword ? <FiEyeOff /> : <FiEye />}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Remember Me & Forgot Password */}
-                      {authMethod === 'password' && (
-                        <div className="flex items-center justify-between pt-2">
-                          <label className="flex items-center gap-2 text-slate-600 text-sm">
-                            <input 
-                              type="checkbox"
-                              checked={rememberMe}
-                              onChange={(e) => setRememberMe(e.target.checked)}
-                              className="w-4 h-4 rounded border-slate-300"
-                            />
-                            Remember me
-                          </label>
-                          
-                          <button
-                            type="button"
-                            onClick={() => setForgotPassword(true)}
-                            className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
-                          >
-                            <FiHelpCircle /> Forgot Password?
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Submit Button */}
-                      <button 
-                        type="submit"
-                        disabled={loading}
-                        className={`w-full py-4 rounded-xl font-bold text-sm hover:shadow-lg transition-all mt-6 ${
-                          authMethod === 'phone' ? 'bg-gradient-to-r from-blue-500 to-blue-600' :
-                          authMethod === 'email' ? 'bg-gradient-to-r from-cyan-500 to-blue-500' :
-                          'bg-gradient-to-r from-slate-800 to-slate-900'
-                        } text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
-                      >
-                        {loading ? (
-                          <>
-                            <motion.div 
-                              animate={{ rotate: 360 }}
-                              transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                              className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
-                            />
-                            {authMethod === 'phone' ? 'Sending OTP...' : 'Logging in...'}
-                          </>
                         ) : (
-                          <>
-                            <FiLogIn />
-                            {authMethod === 'phone' ? 'Send OTP' : 'Login'}
-                          </>
+                          /* EMAIL/PASSWORD FORM */
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-slate-700">Email Address</label>
+                              <div className="relative">
+                                <input 
+                                  type="email"
+                                  required
+                                  placeholder={
+                                    selectedRole === 'admin' ? "admin@studentnagari.com" :
+                                    selectedRole === 'teacher' ? "faculty@studentnagari.edu" :
+                                    "student@example.com"
+                                  }
+                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none font-medium ${
+                                    selectedRole === 'admin' ? 'focus:border-slate-900/30' :
+                                    selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
+                                    'focus:border-blue-500/30'
+                                  }`}
+                                  value={email}
+                                  onChange={(e) => setEmail(e.target.value)}
+                                />
+                                <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                              </div>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-slate-700">
+                                {selectedRole === 'student' && loginMode === 'register' ? 'Create Password' : 'Password'}
+                              </label>
+                              <div className="relative">
+                                <input 
+                                  type={showPassword ? "text" : "password"}
+                                  required
+                                  placeholder={
+                                    selectedRole === 'student' && loginMode === 'register' ? 
+                                    "Minimum 6 characters" : "Enter your password"
+                                  }
+                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 pr-12 rounded-xl outline-none font-medium ${
+                                    selectedRole === 'admin' ? 'focus:border-slate-900/30' :
+                                    selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
+                                    'focus:border-blue-500/30'
+                                  }`}
+                                  value={password}
+                                  onChange={(e) => setPassword(e.target.value)}
+                                />
+                                <FiLock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPassword(!showPassword)}
+                                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                >
+                                  {showPassword ? <FiEyeOff /> : <FiEye />}
+                                </button>
+                              </div>
+                              {selectedRole === 'student' && loginMode === 'register' && (
+                                <p className="text-xs text-slate-500">
+                                  Password must be at least 6 characters long
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         )}
-                      </button>
-                    </form>
+
+                        {/* Remember Me & Forgot Password (not for admin) */}
+                        {(selectedRole === 'student' || selectedRole === 'teacher') && authMethod !== 'phone' && (
+                          <div className="flex items-center justify-between pt-2">
+                            <label className="flex items-center gap-2 text-slate-600 text-sm">
+                              <input 
+                                type="checkbox"
+                                checked={rememberMe}
+                                onChange={(e) => setRememberMe(e.target.checked)}
+                                className="w-4 h-4 rounded border-slate-300"
+                              />
+                              Remember me
+                            </label>
+                            
+                            <button
+                              type="button"
+                              onClick={() => setForgotPassword(true)}
+                              className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
+                            >
+                              <FiHelpCircle /> Forgot Password?
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Submit Button */}
+                        <button 
+                          type="submit"
+                          disabled={loading}
+                          className={`w-full py-4 rounded-xl font-bold text-sm hover:shadow-lg transition-all mt-6 ${
+                            authMethod === 'phone' ? 'bg-gradient-to-r from-blue-500 to-blue-600' :
+                            selectedRole === 'teacher' ? 'bg-gradient-to-r from-emerald-500 to-green-500' :
+                            selectedRole === 'admin' ? 'bg-gradient-to-r from-slate-800 to-slate-900' :
+                            loginMode === 'register' ? 'bg-gradient-to-r from-indigo-500 to-purple-600' :
+                            'bg-gradient-to-r from-cyan-500 to-blue-500'
+                          } text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
+                        >
+                          {loading ? (
+                            <>
+                              <motion.div 
+                                animate={{ rotate: 360 }}
+                                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                              />
+                              {authMethod === 'phone' ? 'Sending OTP...' : 
+                               selectedRole === 'student' && loginMode === 'register' ? 'Creating Account...' : 
+                               'Logging in...'}
+                            </>
+                          ) : (
+                            <>
+                              <FiLogIn />
+                              {authMethod === 'phone' ? 'Send OTP' : 
+                               selectedRole === 'student' && loginMode === 'register' ? 'Create Account' : 
+                               'Login'}
+                            </>
+                          )}
+                        </button>
+                      </form>
+                    )}
+
+                    {/* Switch to other auth methods (for students) */}
+                    {selectedRole === 'student' && authMethod !== 'phone' && authMethod !== 'google' && authMethod !== 'github' && (
+                      <div className="text-center pt-4">
+                        <button
+                          type="button"
+                          onClick={() => setAuthMethod('phone')}
+                          className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                        >
+                          Or login with Phone OTP
+                        </button>
+                      </div>
+                    )}
 
                     {/* Additional Info */}
                     <div className="pt-4 border-t border-slate-100 text-center">
@@ -1085,7 +1299,7 @@ const Login = () => {
             <span>System Status</span>
           </div>
           <p>© 2024 Student Nagari. All rights reserved.</p>
-          <p className="text-xs text-slate-400 mt-2">v2.1.0 • Secure Authentication System</p>
+          <p className="text-xs text-slate-400 mt-2">v2.2.0 • Enhanced Authentication System</p>
         </motion.div>
       </div>
     </div>

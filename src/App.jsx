@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 
 // Layouts
@@ -17,44 +17,58 @@ import Payments from "./pages/Payments";
 import LiveClasses from "./pages/LiveClasses";
 import StudentDashboard from "./pages/StudentDashboard";
 import FacultyDashboard from "./pages/FacultyDashboard";
-import MyCourses from "./pages/MyCourses"; // Naya page for students
+import MyCourses from "./pages/MyCourses";
 
-// Role-based Protection Logic
+/**
+ * ProtectedRoute: Yeh component check karta hai ki user logged in hai 
+ * aur uska role wahi hai jo us page ke liye zaroori hai.
+ */
 const ProtectedRoute = ({ children, roleRequired }) => {
   const { user, userProfile, loading } = useAuth();
+  const location = useLocation();
 
-  // Loading state handling
+  // 1. Loading state: Jab tak Firebase se user profile load na ho jaye, wait karein
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-red-600 text-white font-black italic animate-pulse">
-        NAGARI SYSTEM INITIALIZING...
+      <div className="h-screen flex flex-col items-center justify-center bg-red-600 text-white font-black italic">
+        <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="tracking-widest uppercase text-xs">Verifying Your Access...</p>
       </div>
     );
   }
 
-  // Redirect to login if not authenticated
-  if (!user) return <Navigate to="/login" />;
+  // 2. No User: Agar user login nahi hai, toh use login page par bhej dein
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
   
-  // Redirect to respective dashboard if role doesn't match
+  // 3. Role Verification: Agar user ka role (student/teacher/admin) mismatch hai
   if (roleRequired && userProfile?.role !== roleRequired) {
+    console.log(`Access Denied. Required: ${roleRequired}, Found: ${userProfile?.role}`);
+    
+    // Agar profile load nahi hui (rare case), dashboard par access allow nahi karein
+    if (!userProfile) return null; 
+
+    // Galat role hone par user ko uske apne dashboard par redirect kar dein
     const defaultPaths = { 
       admin: "/", 
       teacher: "/faculty", 
       student: "/student" 
     };
-    return <Navigate to={defaultPaths[userProfile?.role] || "/login"} />;
+    return <Navigate to={defaultPaths[userProfile?.role] || "/login"} replace />;
   }
   
+  // Agar sab theek hai, toh dashboard dikhayein
   return children;
 };
 
 function App() {
   return (
     <Routes>
-      {/* Public Route */}
+      {/* Public Route: Login hamesha accessible rahega */}
       <Route path="/login" element={<Login />} />
 
-      {/* --- PHASE 1: ADMIN PANEL (Email/Pass Access) --- */}
+      {/* --- PHASE 1: ADMIN PANEL --- */}
       <Route 
         path="/" 
         element={
@@ -72,7 +86,7 @@ function App() {
         <Route path="live" element={<LiveClasses />} />
       </Route>
 
-      {/* --- PHASE 2: FACULTY HUB (OTP Only Access) --- */}
+      {/* --- PHASE 2: FACULTY HUB --- */}
       <Route 
         path="/faculty" 
         element={
@@ -84,10 +98,10 @@ function App() {
         <Route index element={<FacultyDashboard />} />
         <Route path="live" element={<LiveClasses />} />
         <Route path="students" element={<Students />} />
-        {/* Future: Route for Assignments/Attendance */}
+        {/* Future routes like Attendance can be added here */}
       </Route>
 
-      {/* --- PHASE 3: STUDENT PORTAL (OTP/Pass Access) --- */}
+      {/* --- PHASE 3: STUDENT PORTAL --- */}
       <Route 
         path="/student" 
         element={
@@ -99,11 +113,10 @@ function App() {
         <Route index element={<StudentDashboard />} />
         <Route path="live" element={<LiveClasses />} />
         <Route path="my-courses" element={<MyCourses />} />
-        {/* Future: Route for Course Player */}
       </Route>
 
-      {/* Global Redirect */}
-      <Route path="*" element={<Navigate to="/login" />} />
+      {/* Global Redirect: Agar koi galat URL dale, toh /login par bhej dein */}
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
