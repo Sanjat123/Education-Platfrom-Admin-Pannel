@@ -18,38 +18,31 @@ import LiveClasses from "./pages/LiveClasses";
 import StudentDashboard from "./pages/StudentDashboard";
 import FacultyDashboard from "./pages/FacultyDashboard";
 import MyCourses from "./pages/MyCourses";
+import CourseView from "./pages/CourseView"; // Naya Player Page
 
 /**
- * ProtectedRoute: Yeh component check karta hai ki user logged in hai 
- * aur uska role wahi hai jo us page ke liye zaroori hai.
+ * ProtectedRoute: Yeh component user login aur role verification handle karta hai.
  */
 const ProtectedRoute = ({ children, roleRequired }) => {
   const { user, userProfile, loading } = useAuth();
   const location = useLocation();
 
-  // 1. Loading state: Jab tak Firebase se user profile load na ho jaye, wait karein
   if (loading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-red-600 text-white font-black italic">
         <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="tracking-widest uppercase text-xs">Verifying Your Access...</p>
+        <p className="tracking-widest uppercase text-xs">Verifying Credentials...</p>
       </div>
     );
   }
 
-  // 2. No User: Agar user login nahi hai, toh use login page par bhej dein
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   
-  // 3. Role Verification: Agar user ka role (student/teacher/admin) mismatch hai
   if (roleRequired && userProfile?.role !== roleRequired) {
-    console.log(`Access Denied. Required: ${roleRequired}, Found: ${userProfile?.role}`);
-    
-    // Agar profile load nahi hui (rare case), dashboard par access allow nahi karein
     if (!userProfile) return null; 
 
-    // Galat role hone par user ko uske apne dashboard par redirect kar dein
     const defaultPaths = { 
       admin: "/", 
       teacher: "/faculty", 
@@ -58,17 +51,15 @@ const ProtectedRoute = ({ children, roleRequired }) => {
     return <Navigate to={defaultPaths[userProfile?.role] || "/login"} replace />;
   }
   
-  // Agar sab theek hai, toh dashboard dikhayein
   return children;
 };
 
 function App() {
   return (
     <Routes>
-      {/* Public Route: Login hamesha accessible rahega */}
       <Route path="/login" element={<Login />} />
 
-      {/* --- PHASE 1: ADMIN PANEL --- */}
+      {/* --- ADMIN PANEL --- */}
       <Route 
         path="/" 
         element={
@@ -86,7 +77,7 @@ function App() {
         <Route path="live" element={<LiveClasses />} />
       </Route>
 
-      {/* --- PHASE 2: FACULTY HUB --- */}
+      {/* --- FACULTY HUB --- */}
       <Route 
         path="/faculty" 
         element={
@@ -98,10 +89,9 @@ function App() {
         <Route index element={<FacultyDashboard />} />
         <Route path="live" element={<LiveClasses />} />
         <Route path="students" element={<Students />} />
-        {/* Future routes like Attendance can be added here */}
       </Route>
 
-      {/* --- PHASE 3: STUDENT PORTAL --- */}
+      {/* --- STUDENT PORTAL --- */}
       <Route 
         path="/student" 
         element={
@@ -113,9 +103,10 @@ function App() {
         <Route index element={<StudentDashboard />} />
         <Route path="live" element={<LiveClasses />} />
         <Route path="my-courses" element={<MyCourses />} />
+        {/* Course Player Route: Idhar student video playlist dekhega */}
+        <Route path="course/:courseId" element={<CourseView />} />
       </Route>
 
-      {/* Global Redirect: Agar koi galat URL dale, toh /login par bhej dein */}
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
