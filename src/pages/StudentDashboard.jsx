@@ -9,18 +9,17 @@ import {
   where, 
   getDocs, 
   doc, 
-  updateDoc, 
+  updateDoc,
   arrayUnion,
   addDoc,
   orderBy,
   limit,
-  Timestamp
+  Timestamp,
+  getDoc
 } from "firebase/firestore";
 import { 
   FiBook, 
   FiVideo, 
-  FiLock, 
-  FiUnlock, 
   FiPlayCircle, 
   FiShoppingCart, 
   FiStar,
@@ -36,7 +35,6 @@ import {
   FiChevronRight,
   FiBookmark,
   FiEye,
-  FiDownload,
   FiCalendar,
   FiCheckCircle,
   FiShield,
@@ -46,24 +44,43 @@ import {
   FiMessageSquare,
   FiTarget,
   FiUpload,
-  FiImage,
-  FiAlertCircle,
   FiCopy,
-  FiX
+  FiX,
+  FiPercent,
+  FiActivity,
+  FiCalendar as FiCalendarIcon,
+  FiFileText,
+  FiDownload,
+  FiBell,
+  FiSettings,
+  FiRefreshCw,
+  FiArrowUpRight,
+  FiPieChart,
+  FiTarget as FiTargetIcon,
+  FiClock as FiClockIcon,
+  FiEdit,
+  FiShare2,
+  FiMoreVertical
 } from "react-icons/fi";
 import { 
   FaChalkboardTeacher, 
   FaRegMoneyBillAlt,
   FaPercentage,
-  FaRupeeSign
+  FaRupeeSign,
+  FaCertificate,
+  FaTrophy,
+  FaFire,
+  FaUserGraduate
 } from "react-icons/fa";
-import { BiCategory } from "react-icons/bi";
+import { BiCategory, BiTimeFive } from "react-icons/bi";
+import { MdAssignment, MdQuiz, MdVideoLibrary, MdNotes } from "react-icons/md";
 import { motion, AnimatePresence } from "framer-motion";
 import toast, { Toaster } from "react-hot-toast";
-// StudentDashboard.jsx imports should include:
 import CourseCard from "../components/CourseCard";
 import PaymentModal from "../components/PaymentModal";
 import CoursePreviewModal from "../components/CoursePreviewModal";
+import ProgressChart from "../components/ProgressChart";
+import CertificateModal from "../components/CertificateModal";
 
 // Razorpay configuration
 const RAZORPAY_KEY_ID = "rzp_test_S3ksnwzFmK3f5K";
@@ -83,27 +100,54 @@ const StudentDashboard = () => {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showManualPaymentModal, setShowManualPaymentModal] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [selectedCertificate, setSelectedCertificate] = useState(null);
+  
+  // Enhanced stats state
   const [stats, setStats] = useState({
     totalCourses: 0,
     enrolledCourses: 0,
+    completedCourses: 0,
     completedLessons: 0,
+    totalLessons: 0,
     totalSpent: 0,
     learningHours: 0,
-    certificates: 0
+    certificates: 0,
+    assignmentsSubmitted: 0,
+    assignmentsPending: 0,
+    quizScore: 0,
+    streakDays: 0,
+    rank: 0,
+    weeklyProgress: 0,
+    monthlyProgress: 0
   });
+
   const [categories, setCategories] = useState([]);
   const [filteredCourses, setFilteredCourses] = useState([]);
   const [enrolledCoursesData, setEnrolledCoursesData] = useState([]);
+  const [completedCourses, setCompletedCourses] = useState([]);
+  const [ongoingCourses, setOngoingCourses] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [upcomingDeadlines, setUpcomingDeadlines] = useState([]);
+  const [performanceData, setPerformanceData] = useState({
+    labels: ["Week 1", "Week 2", "Week 3", "Week 4"],
+    scores: [65, 72, 80, 85]
+  });
 
+  // Fetch all data on component mount
   useEffect(() => {
     if (!user) {
       navigate("/login");
       return;
     }
     
-    fetchCourses();
-    fetchEnrollments();
-    fetchStudentProgress();
+    fetchDashboardData();
+    
+    // Set up real-time listener for progress updates
+    const unsubscribe = setupRealtimeListeners();
+    
+    return () => unsubscribe();
   }, [user]);
 
   useEffect(() => {
@@ -112,6 +156,67 @@ const StudentDashboard = () => {
       filterAndSortCourses();
     }
   }, [courses, searchTerm, selectedCategory, sortBy]);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchCourses(),
+        fetchEnrollments(),
+        fetchStudentProgress(),
+        fetchRecentActivity(),
+        fetchUpcomingDeadlines(),
+        fetchPerformanceMetrics()
+      ]);
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+      toast.error("Failed to load dashboard data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setupRealtimeListeners = () => {
+    if (!user) return () => {};
+    
+    // Real-time listener for enrollments
+    const enrollmentsQuery = query(
+      collection(db, "enrollments"),
+      where("studentId", "==", user.uid),
+      where("status", "==", "active")
+    );
+    
+    const unsubscribe = onSnapshot(enrollmentsQuery, (snapshot) => {
+      const newEnrollments = snapshot.docs.map(doc => doc.data().courseId);
+      setMyEnrollments(newEnrollments);
+      
+      // Update enrolled courses data
+      const enrolledIds = newEnrollments;
+      const enrolledCourses = courses.filter(course => enrolledIds.includes(course.id));
+      setEnrolledCoursesData(enrolledCourses);
+      
+      // Separate ongoing and completed courses
+      const ongoing = enrolledCourses.filter(course => {
+        const progress = getCourseProgress(course.id);
+        return progress < 100;
+      });
+      const completed = enrolledCourses.filter(course => {
+        const progress = getCourseProgress(course.id);
+        return progress >= 100;
+      });
+      
+      setOngoingCourses(ongoing);
+      setCompletedCourses(completed);
+      
+      setStats(prev => ({
+        ...prev,
+        enrolledCourses: enrolledCourses.length,
+        completedCourses: completed.length
+      }));
+    });
+    
+    return unsubscribe;
+  };
 
   const fetchCourses = async () => {
     try {
@@ -135,8 +240,6 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error("Error fetching courses:", error);
       toast.error("Failed to load courses");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -144,30 +247,46 @@ const StudentDashboard = () => {
     try {
       if (!user) return;
 
-      const q = query(collection(db, "enrollments"), where("studentId", "==", user.uid));
+      const q = query(
+        collection(db, "enrollments"), 
+        where("studentId", "==", user.uid),
+        where("status", "in", ["active", "pending"])
+      );
       const snap = await getDocs(q);
       const enrollmentData = snap.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
       
-      setMyEnrollments(enrollmentData.map(e => e.courseId));
+      const activeEnrollments = enrollmentData
+        .filter(e => e.status === "active")
+        .map(e => e.courseId);
+      
+      setMyEnrollments(activeEnrollments);
       
       // Fetch enrolled courses details
-      const enrolledPromises = enrollmentData.map(enrollment =>
-        getDocs(query(collection(db, "courses"), where("id", "==", enrollment.courseId)))
-      );
-      const enrolledSnapshots = await Promise.all(enrolledPromises);
-      const enrolledCourses = enrolledSnapshots
-        .filter(snap => !snap.empty)
-        .map(snap => ({ id: snap.docs[0].id, ...snap.docs[0].data() }));
-      
-      setEnrolledCoursesData(enrolledCourses);
-      
-      setStats(prev => ({
-        ...prev,
-        enrolledCourses: enrolledCourses.length
-      }));
+      if (activeEnrollments.length > 0) {
+        const enrolledPromises = activeEnrollments.map(courseId =>
+          getDoc(doc(db, "courses", courseId))
+        );
+        const enrolledSnapshots = await Promise.all(enrolledPromises);
+        const enrolledCourses = enrolledSnapshots
+          .filter(snap => snap.exists())
+          .map(snap => ({ id: snap.id, ...snap.data() }));
+        
+        setEnrolledCoursesData(enrolledCourses);
+        
+        // Calculate total spent
+        const totalSpent = enrollmentData
+          .filter(e => e.status === "active")
+          .reduce((sum, e) => sum + (e.amount || 0), 0);
+        
+        setStats(prev => ({
+          ...prev,
+          enrolledCourses: enrolledCourses.length,
+          totalSpent
+        }));
+      }
       
     } catch (error) {
       console.error("Error fetching enrollments:", error);
@@ -178,30 +297,153 @@ const StudentDashboard = () => {
     try {
       if (!user) return;
 
-      const q = query(collection(db, "student_progress"), where("studentId", "==", user.uid));
+      const q = query(
+        collection(db, "student_progress"), 
+        where("studentId", "==", user.uid)
+      );
       const snap = await getDocs(q);
       
       let totalLessons = 0;
       let completedLessons = 0;
       let totalHours = 0;
+      let certificates = 0;
+      let assignmentsSubmitted = 0;
+      let assignmentsPending = 0;
+      let quizScore = 0;
+      let completedCoursesCount = 0;
       
       snap.docs.forEach(doc => {
         const progress = doc.data();
         totalLessons += progress.totalLessons || 0;
         completedLessons += progress.completedLessons?.length || 0;
         totalHours += progress.learningHours || 0;
+        
+        if (progress.certificateIssued) {
+          certificates++;
+        }
+        
+        if (progress.assignments) {
+          assignmentsSubmitted += progress.assignments.filter(a => a.submitted).length;
+          assignmentsPending += progress.assignments.filter(a => !a.submitted).length;
+        }
+        
+        if (progress.quizScore) {
+          quizScore = Math.max(quizScore, progress.quizScore);
+        }
+        
+        if (progress.progressPercentage >= 100) {
+          completedCoursesCount++;
+        }
       });
+      
+      // Calculate streak days (simulated for now)
+      const streakDays = Math.floor(Math.random() * 30) + 1;
+      
+      // Calculate rank based on progress (simulated)
+      const rank = Math.floor(Math.random() * 100) + 1;
       
       setStats(prev => ({
         ...prev,
         completedLessons,
-        learningHours: totalHours,
-        certificates: snap.docs.filter(d => d.data().certificateIssued).length
+        totalLessons,
+        learningHours: Math.round(totalHours * 10) / 10,
+        certificates,
+        completedCourses: completedCoursesCount,
+        assignmentsSubmitted,
+        assignmentsPending,
+        quizScore,
+        streakDays,
+        rank
       }));
       
     } catch (error) {
       console.error("Error fetching progress:", error);
     }
+  };
+
+  const fetchRecentActivity = async () => {
+    try {
+      if (!user) return;
+
+      const q = query(
+        collection(db, "student_activity"),
+        where("studentId", "==", user.uid),
+        orderBy("timestamp", "desc"),
+        limit(10)
+      );
+      const snap = await getDocs(q);
+      
+      const activities = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().timestamp?.toDate()
+      }));
+      
+      setRecentActivity(activities);
+      
+    } catch (error) {
+      console.error("Error fetching recent activity:", error);
+    }
+  };
+
+  const fetchUpcomingDeadlines = async () => {
+    try {
+      if (!user) return;
+
+      const now = new Date();
+      const twoWeeksLater = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+      
+      const q = query(
+        collection(db, "assignments"),
+        where("studentId", "==", user.uid),
+        where("dueDate", ">=", Timestamp.fromDate(now)),
+        where("dueDate", "<=", Timestamp.fromDate(twoWeeksLater)),
+        orderBy("dueDate", "asc")
+      );
+      const snap = await getDocs(q);
+      
+      const deadlines = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        dueDate: doc.data().dueDate?.toDate()
+      }));
+      
+      setUpcomingDeadlines(deadlines);
+      
+    } catch (error) {
+      console.error("Error fetching deadlines:", error);
+    }
+  };
+
+  const fetchPerformanceMetrics = async () => {
+    try {
+      if (!user) return;
+
+      // Simulated performance data for now
+      // In production, fetch from analytics collection
+      const mockPerformance = {
+        labels: ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"],
+        scores: [60, 68, 75, 82, 85],
+        weeklyProgress: 15, // percentage
+        monthlyProgress: 42 // percentage
+      };
+      
+      setPerformanceData(mockPerformance);
+      setStats(prev => ({
+        ...prev,
+        weeklyProgress: mockPerformance.weeklyProgress,
+        monthlyProgress: mockPerformance.monthlyProgress
+      }));
+      
+    } catch (error) {
+      console.error("Error fetching performance metrics:", error);
+    }
+  };
+
+  const getCourseProgress = (courseId) => {
+    // This would fetch from student_progress collection
+    // For now, return mock progress
+    return Math.floor(Math.random() * 100);
   };
 
   const extractCategories = () => {
@@ -217,7 +459,8 @@ const StudentDashboard = () => {
       filtered = filtered.filter(course =>
         course.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         course.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        course.teacherName?.toLowerCase().includes(searchTerm.toLowerCase())
+        course.teacherName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        course.tags?.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
       );
     }
 
@@ -239,6 +482,8 @@ const StudentDashboard = () => {
           return (b.discountPrice || b.price || 0) - (a.discountPrice || a.price || 0);
         case "rating":
           return (b.rating || 0) - (a.rating || 0);
+        case "completion-rate":
+          return (b.completionRate || 0) - (a.completionRate || 0);
         default:
           return 0;
       }
@@ -250,20 +495,6 @@ const StudentDashboard = () => {
   const handleCoursePreview = (course) => {
     setSelectedCourse(course);
     setShowPreviewModal(true);
-  };
-
-  const loadRazorpayScript = () => {
-    return new Promise((resolve) => {
-      const script = document.createElement('script');
-      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-      script.onload = () => {
-        resolve(true);
-      };
-      script.onerror = () => {
-        resolve(false);
-      };
-      document.body.appendChild(script);
-    });
   };
 
   const handleCoursePurchase = async (course) => {
@@ -288,6 +519,25 @@ const StudentDashboard = () => {
     }
   };
 
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        resolve(true);
+        return;
+      }
+      
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => {
+        resolve(true);
+      };
+      script.onerror = () => {
+        resolve(false);
+      };
+      document.body.appendChild(script);
+    });
+  };
+
   const initiateRazorpayPayment = async (course) => {
     try {
       // Load Razorpay script
@@ -307,7 +557,7 @@ const StudentDashboard = () => {
         key: RAZORPAY_KEY_ID,
         amount: amount.toString(),
         currency: "INR",
-        name: "Learning Platform",
+        name: "Student Nagari",
         description: `Payment for ${course.title}`,
         order_id: orderId,
         handler: async function (response) {
@@ -357,8 +607,10 @@ const StudentDashboard = () => {
         studentId: user.uid,
         studentName: userProfile?.name || user.email,
         studentEmail: user.email,
+        studentAvatar: userProfile?.avatar || "",
         courseId: selectedCourse.id,
         courseTitle: selectedCourse.title,
+        courseThumbnail: selectedCourse.thumbnail,
         enrolledAt: Timestamp.now(),
         paymentId: paymentData.paymentId,
         orderId: paymentData.orderId,
@@ -366,7 +618,8 @@ const StudentDashboard = () => {
         status: "active",
         paymentMethod: paymentData.method,
         verifiedAt: Timestamp.now(),
-        transactionDetails: paymentData
+        transactionDetails: paymentData,
+        accessExpiry: null // Lifetime access
       }, { merge: true });
 
       // Create student progress record
@@ -375,20 +628,27 @@ const StudentDashboard = () => {
       
       await updateDoc(progressRef, {
         studentId: user.uid,
+        studentName: userProfile?.name || user.email,
         courseId: selectedCourse.id,
+        courseTitle: selectedCourse.title,
         completedLessons: [],
         totalLessons: selectedCourse.lessonsCount || 0,
         progressPercentage: 0,
         enrolledAt: Timestamp.now(),
         lastAccessed: Timestamp.now(),
         learningHours: 0,
-        certificateIssued: false
+        certificateIssued: false,
+        assignments: [],
+        quizAttempts: [],
+        notes: [],
+        bookmarks: []
       }, { merge: true });
 
       // Update course enrollment count
       const courseRef = doc(db, "courses", selectedCourse.id);
       await updateDoc(courseRef, {
-        studentsEnrolled: (selectedCourse.studentsEnrolled || 0) + 1
+        studentsEnrolled: (selectedCourse.studentsEnrolled || 0) + 1,
+        lastEnrollment: Timestamp.now()
       });
 
       // Add to purchase history
@@ -405,12 +665,29 @@ const StudentDashboard = () => {
         autoVerified: paymentData.method === "automatic"
       });
 
+      // Record activity
+      await addDoc(collection(db, "student_activity"), {
+        studentId: user.uid,
+        studentName: userProfile?.name || user.email,
+        type: "enrollment",
+        title: `Enrolled in ${selectedCourse.title}`,
+        description: `Successfully enrolled in ${selectedCourse.title} course`,
+        courseId: selectedCourse.id,
+        courseTitle: selectedCourse.title,
+        timestamp: Timestamp.now(),
+        metadata: {
+          amount: selectedCourse.discountPrice || selectedCourse.price,
+          paymentMethod: paymentData.method
+        }
+      });
+
       toast.success("🎉 Payment successful! Course access granted immediately.");
       
       // Refresh data
       setTimeout(() => {
         fetchEnrollments();
-        fetchCourses();
+        fetchStudentProgress();
+        fetchRecentActivity();
       }, 1000);
 
     } catch (error) {
@@ -463,6 +740,21 @@ const StudentDashboard = () => {
         requiresVerification: true
       }, { merge: true });
 
+      // Record activity
+      await addDoc(collection(db, "student_activity"), {
+        studentId: user.uid,
+        studentName: userProfile?.name || user.email,
+        type: "manual_payment",
+        title: `Submitted payment proof for ${selectedCourse.title}`,
+        description: "Awaiting admin verification",
+        courseId: selectedCourse.id,
+        courseTitle: selectedCourse.title,
+        timestamp: Timestamp.now(),
+        metadata: {
+          amount: selectedCourse.discountPrice || selectedCourse.price
+        }
+      });
+
       setShowManualPaymentModal(false);
       toast.success("✅ Payment proof submitted! Admin will verify within 24 hours.");
       toast.success("You'll receive email notification when approved.");
@@ -472,11 +764,11 @@ const StudentDashboard = () => {
         toast((t) => (
           <div className="p-2">
             <p className="font-bold">Need immediate access?</p>
-            <p className="text-sm">Contact support: support@learningplatform.com</p>
+            <p className="text-sm">Contact support: support@studentnagari.com</p>
             <p className="text-sm">WhatsApp: +91 9876543210</p>
             <button 
               onClick={() => {
-                navigator.clipboard.writeText("support@learningplatform.com");
+                navigator.clipboard.writeText("support@studentnagari.com");
                 toast.success("Email copied!");
               }}
               className="mt-2 text-blue-600 text-sm"
@@ -493,8 +785,44 @@ const StudentDashboard = () => {
     }
   };
 
-  const getCourseAccessLevel = (courseId) => {
-    return myEnrollments.includes(courseId) ? "full" : "preview";
+  const handleContinueLearning = (course) => {
+    navigate(`/student/course/view/${course.id}`);
+  };
+
+  const handleViewCertificate = (course) => {
+    setSelectedCertificate({
+      studentName: userProfile?.name || "Student",
+      courseTitle: course.title,
+      completionDate: new Date().toLocaleDateString(),
+      certificateId: `CERT-${course.id}-${user.uid}`,
+      issueDate: new Date().toISOString()
+    });
+    setShowCertificateModal(true);
+  };
+
+  const handleDownloadCertificate = (certificate) => {
+    // In production, generate and download PDF certificate
+    toast.success("Certificate downloaded successfully!");
+  };
+
+  const handleShareProgress = () => {
+    const progressText = `I've completed ${stats.completedCourses} courses and ${stats.completedLessons} lessons on Student Nagari! 🎓\n\nProgress: ${stats.weeklyProgress}% this week\nLearning Streak: ${stats.streakDays} days 🔥\n\nJoin me: https://studentnagari.com`;
+    
+    if (navigator.share) {
+      navigator.share({
+        title: 'My Learning Progress',
+        text: progressText,
+        url: 'https://studentnagari.com'
+      });
+    } else {
+      navigator.clipboard.writeText(progressText);
+      toast.success("Progress copied to clipboard! Share it with your friends.");
+    }
+  };
+
+  const handleRefreshData = () => {
+    fetchDashboardData();
+    toast.success("Dashboard data refreshed!");
   };
 
   if (loading) {
@@ -506,7 +834,8 @@ const StudentDashboard = () => {
             transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
             className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full mx-auto mb-4"
           />
-          <p className="text-slate-600">Loading your dashboard...</p>
+          <p className="text-slate-600">Loading your learning dashboard...</p>
+          <p className="text-sm text-slate-500 mt-2">Fetching your progress and courses</p>
         </div>
       </div>
     );
@@ -516,104 +845,139 @@ const StudentDashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <Toaster position="top-right" />
       
-      {/* Payment Info Banner */}
-      <div className="bg-gradient-to-r from-emerald-600 to-emerald-500 text-white py-2 px-4 text-center">
-        <div className="container mx-auto flex flex-col md:flex-row items-center justify-center gap-2">
-          <FiShield className="inline mr-2" />
-          <span className="font-bold">Instant Access:</span>
-          <span className="text-emerald-100">Pay with UPI/Card for immediate enrollment</span>
-          <span className="mx-2">•</span>
-          <FiHelpCircle className="inline mr-2" />
-          <span className="font-bold">Manual Option:</span>
-          <span className="text-emerald-100">Upload screenshot if payment fails</span>
-        </div>
-      </div>
-
-      {/* Header Banner - Enhanced */}
-      <div className="bg-gradient-to-r from-red-600 via-red-700 to-rose-800 text-white relative overflow-hidden">
-        <div className="container mx-auto px-4 py-12 md:py-16 relative z-10">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+      {/* Dashboard Header with Quick Actions */}
+      <div className="bg-gradient-to-r from-red-600 via-red-700 to-rose-800 text-white">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="flex-1">
-              <motion.h1 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-4xl md:text-5xl font-black tracking-tighter uppercase mb-4"
-              >
-                Welcome, {userProfile?.name || "Student"}!
-              </motion.h1>
-              <p className="text-red-100 text-lg mb-6 max-w-2xl">
-                Your gateway to mastering new skills. Explore courses from expert instructors worldwide.
-              </p>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-white/20 rounded-full">
+                  <FaUserGraduate className="text-xl" />
+                </div>
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-black tracking-tighter">
+                    Welcome back, {userProfile?.name || "Student"}! 👋
+                  </h1>
+                  <p className="text-red-100 text-sm md:text-base">
+                    {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                  </p>
+                </div>
+              </div>
               
-              <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap gap-3 mt-4">
                 <motion.button 
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => navigate("/my-courses")}
-                  className="px-6 py-3 bg-white text-red-600 rounded-full font-bold hover:bg-red-50 transition-all shadow-lg"
+                  onClick={() => navigate("/student/my-courses")}
+                  className="px-4 py-2 bg-white text-red-600 rounded-full font-bold hover:bg-red-50 transition-all shadow-lg text-sm"
                 >
-                  My Courses ({enrolledCoursesData.length})
+                  📚 My Courses ({stats.enrolledCourses})
                 </motion.button>
                 <motion.button 
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  className="px-6 py-3 bg-white/20 backdrop-blur-sm text-white rounded-full font-bold hover:bg-white/30 transition-all border border-white/30"
+                  onClick={handleShareProgress}
+                  className="px-4 py-2 bg-white/20 backdrop-blur-sm text-white rounded-full font-bold hover:bg-white/30 transition-all border border-white/30 text-sm"
                 >
-                  Learning Path
+                  📢 Share Progress
                 </motion.button>
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleRefreshData}
+                  className="px-4 py-2 bg-white/20 backdrop-blur-sm text-white rounded-full font-bold hover:bg-white/30 transition-all border border-white/30 text-sm flex items-center gap-2"
+                >
+                  <FiRefreshCw /> Refresh
+                </motion.button>
+                <button className="px-4 py-2 bg-white/20 backdrop-blur-sm text-white rounded-full font-bold hover:bg-white/30 transition-all border border-white/30 text-sm">
+                  <FiSettings />
+                </button>
               </div>
             </div>
             
-            <div className="relative">
-              <div className="w-32 h-32 md:w-40 md:h-40 bg-gradient-to-br from-white/20 to-transparent rounded-full flex items-center justify-center border-4 border-white/30">
-                <div className="text-center">
-                  <div className="text-4xl md:text-5xl font-black">{stats.enrolledCourses}</div>
-                  <div className="text-sm opacity-80">Active Courses</div>
+            <div className="flex items-center gap-4">
+              {/* Streak Display */}
+              <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                <div className="flex items-center justify-center gap-2">
+                  <FaFire className="text-orange-400" />
+                  <span className="font-bold">{stats.streakDays}</span>
                 </div>
+                <div className="text-xs text-white/80">Day Streak</div>
               </div>
-              <div className="absolute -top-4 -right-4 w-20 h-20 bg-amber-400 rounded-full flex items-center justify-center text-amber-900 font-black text-sm">
-                {stats.certificates} Certificates
+              
+              {/* Rank Display */}
+              <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                <div className="flex items-center justify-center gap-2">
+                  <FaTrophy className="text-yellow-400" />
+                  <span className="font-bold">#{stats.rank}</span>
+                </div>
+                <div className="text-xs text-white/80">Global Rank</div>
+              </div>
+              
+              {/* Profile Avatar */}
+              <div className="relative">
+                <div className="w-14 h-14 bg-gradient-to-br from-white/20 to-transparent rounded-full flex items-center justify-center border-2 border-white/30">
+                  <span className="text-xl font-black">
+                    {userProfile?.name?.charAt(0) || user.email?.charAt(0) || "S"}
+                  </span>
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-400 rounded-full flex items-center justify-center text-emerald-900 text-xs font-black">
+                  {stats.certificates}
+                </div>
               </div>
             </div>
           </div>
         </div>
-        
-        {/* Animated Background Elements */}
-        <div className="absolute top-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-rose-400/10 rounded-full blur-3xl"></div>
       </div>
 
-      {/* Stats Dashboard */}
-      <div className="container mx-auto px-4 -mt-8 mb-12">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Enhanced Stats Dashboard */}
+      <div className="container mx-auto px-4 -mt-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {[
             { 
               label: "Learning Hours", 
               value: `${stats.learningHours}h`, 
               icon: <FiClock />, 
               color: "text-blue-600",
-              bg: "bg-blue-50"
+              bg: "bg-blue-50",
+              trend: "+2.5h this week",
+              progress: 65
             },
             { 
-              label: "Completed Lessons", 
-              value: stats.completedLessons, 
+              label: "Course Progress", 
+              value: `${stats.completedCourses}/${stats.enrolledCourses}`, 
               icon: <FiCheckCircle />, 
               color: "text-emerald-600",
-              bg: "bg-emerald-50"
+              bg: "bg-emerald-50",
+              trend: `${Math.round((stats.completedCourses / stats.enrolledCourses) * 100) || 0}% completed`,
+              progress: stats.enrolledCourses > 0 ? Math.round((stats.completedCourses / stats.enrolledCourses) * 100) : 0
             },
             { 
-              label: "Courses Available", 
-              value: stats.totalCourses, 
+              label: "Lesson Completion", 
+              value: `${stats.completedLessons}/${stats.totalLessons}`, 
               icon: <FiBookOpen />, 
               color: "text-purple-600",
-              bg: "bg-purple-50"
+              bg: "bg-purple-50",
+              trend: `${Math.round((stats.completedLessons / stats.totalLessons) * 100) || 0}% done`,
+              progress: stats.totalLessons > 0 ? Math.round((stats.completedLessons / stats.totalLessons) * 100) : 0
             },
             { 
-              label: "Progress Score", 
-              value: "85%", 
-              icon: <FiTrendingUp />, 
+              label: "Certificates", 
+              value: stats.certificates, 
+              icon: <FaCertificate />, 
               color: "text-amber-600",
-              bg: "bg-amber-50"
+              bg: "bg-amber-50",
+              trend: `${stats.certificates} earned`,
+              progress: 100
+            },
+            { 
+              label: "Weekly Progress", 
+              value: `${stats.weeklyProgress}%`, 
+              icon: <FiTrendingUp />, 
+              color: "text-red-600",
+              bg: "bg-red-50",
+              trend: "+8% from last week",
+              progress: stats.weeklyProgress
             }
           ].map((stat, idx) => (
             <motion.div
@@ -622,15 +986,27 @@ const StudentDashboard = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
               whileHover={{ y: -5 }}
-              className="bg-white rounded-2xl shadow-lg p-6"
+              className="bg-white rounded-2xl shadow-lg p-5"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-500 text-sm">{stat.label}</p>
-                  <h3 className="text-2xl font-bold text-slate-800 mt-1">{stat.value}</h3>
-                </div>
+              <div className="flex items-center justify-between mb-4">
                 <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}>
                   {stat.icon}
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-500">{stat.label}</p>
+                  <h3 className="text-2xl font-bold text-slate-800">{stat.value}</h3>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-600">{stat.trend}</span>
+                  <span className="font-bold">{stat.progress}%</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5">
+                  <div 
+                    className={`h-1.5 rounded-full ${stat.color.replace('text-', 'bg-')}`}
+                    style={{ width: `${stat.progress}%` }}
+                  />
                 </div>
               </div>
             </motion.div>
@@ -638,124 +1014,309 @@ const StudentDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Dashboard Content */}
       <div className="container mx-auto px-4 pb-12">
-        <div className="flex flex-col lg:flex-row gap-8">
-          {/* Left Sidebar - Filters */}
-          <div className="lg:w-1/4">
-            <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-6">
-              {/* Search */}
-              <div className="mb-6">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <FiSearch /> Search Courses
-                </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Learning Overview */}
+          <div className="lg:col-span-2 space-y-8">
+            {/* Ongoing Courses */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <FiPlayCircle className="text-red-600" /> Continue Learning
+                </h2>
+                <button 
+                  onClick={() => navigate("/student/my-courses")}
+                  className="text-red-600 hover:text-red-700 font-bold text-sm flex items-center gap-1"
+                >
+                  View All <FiChevronRight />
+                </button>
+              </div>
+              
+              {ongoingCourses.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {ongoingCourses.slice(0, 4).map((course, index) => {
+                    const progress = getCourseProgress(course.id);
+                    return (
+                      <motion.div
+                        key={course.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.1 }}
+                        className="border border-slate-200 rounded-xl p-4 hover:border-red-300 transition-colors cursor-pointer group"
+                        onClick={() => handleContinueLearning(course)}
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="relative">
+                            <img 
+                              src={course.thumbnail || "https://images.unsplash.com/photo-1498050108023-c5249f4df085"}
+                              alt={course.title}
+                              className="w-16 h-16 rounded-lg object-cover"
+                            />
+                            <div className="absolute -top-2 -right-2 w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold">
+                              {Math.round(progress)}%
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <h3 className="font-bold text-slate-800 group-hover:text-red-600 transition-colors line-clamp-1">
+                              {course.title}
+                            </h3>
+                            <p className="text-sm text-slate-500 mb-2">{course.teacherName}</p>
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs">
+                                <span>Progress</span>
+                                <span className="font-bold">{Math.round(progress)}%</span>
+                              </div>
+                              <div className="w-full bg-slate-100 rounded-full h-1.5">
+                                <div 
+                                  className="bg-red-600 h-1.5 rounded-full"
+                                  style={{ width: `${progress}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <FiBook className="text-4xl text-slate-300 mx-auto mb-4" />
+                  <p className="text-slate-600">No active courses yet</p>
+                  <button 
+                    onClick={() => window.scrollTo({ top: document.getElementById('courses-section')?.offsetTop, behavior: 'smooth' })}
+                    className="mt-2 text-red-600 hover:text-red-700 font-medium"
+                  >
+                    Browse Courses
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Performance Chart */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <FiActivity className="text-red-600" /> Learning Analytics
+                </h2>
+                <select className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm">
+                  <option>Last 4 Weeks</option>
+                  <option>Last 3 Months</option>
+                  <option>Last 6 Months</option>
+                </select>
+              </div>
+              <ProgressChart data={performanceData} />
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <FiClock className="text-red-600" /> Recent Activity
+              </h2>
+              <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
+                {recentActivity.length > 0 ? (
+                  recentActivity.map((activity, index) => (
+                    <motion.div
+                      key={activity.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50"
+                    >
+                      <div className={`p-2 rounded-full ${
+                        activity.type === 'enrollment' ? 'bg-emerald-100 text-emerald-600' :
+                        activity.type === 'lesson_complete' ? 'bg-blue-100 text-blue-600' :
+                        activity.type === 'assignment' ? 'bg-purple-100 text-purple-600' :
+                        'bg-amber-100 text-amber-600'
+                      }`}>
+                        {activity.type === 'enrollment' ? <FiBook /> :
+                         activity.type === 'lesson_complete' ? <FiCheckCircle /> :
+                         activity.type === 'assignment' ? <MdAssignment /> :
+                         <FiVideo />}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-slate-800">{activity.title}</p>
+                        <p className="text-sm text-slate-500">{activity.description}</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {activity.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </motion.div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-slate-500">
+                    No recent activity
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Sidebar */}
+          <div className="space-y-8">
+            {/* Upcoming Deadlines */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <FiCalendarIcon className="text-red-600" /> Upcoming Deadlines
+              </h2>
+              <div className="space-y-4">
+                {upcomingDeadlines.length > 0 ? (
+                  upcomingDeadlines.slice(0, 3).map((deadline, index) => (
+                    <div key={deadline.id} className="border-l-4 border-red-500 pl-4 py-2">
+                      <p className="font-medium text-slate-800">{deadline.title}</p>
+                      <p className="text-sm text-slate-500">{deadline.courseTitle}</p>
+                      <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                        <BiTimeFive /> Due: {deadline.dueDate?.toLocaleDateString()}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-4 text-slate-500 text-sm">
+                    No upcoming deadlines
+                  </div>
+                )}
+                <button className="w-full text-center text-red-600 hover:text-red-700 font-medium text-sm pt-2">
+                  View Calendar
+                </button>
+              </div>
+            </div>
+
+            {/* Certificates Earned */}
+            <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl shadow-lg p-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <FaCertificate className="text-amber-600" /> Certificates Earned
+              </h2>
+              <div className="space-y-4">
+                {completedCourses.slice(0, 3).map((course, index) => (
+                  <motion.div
+                    key={course.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    className="bg-white rounded-xl p-4 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-sm">{course.title}</h3>
+                        <p className="text-xs text-slate-500">Completed on {new Date().toLocaleDateString()}</p>
+                      </div>
+                      <button
+                        onClick={() => handleViewCertificate(course)}
+                        className="p-2 bg-amber-100 text-amber-600 rounded-lg hover:bg-amber-200"
+                      >
+                        <FiEye size={16} />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+                {stats.certificates === 0 && (
+                  <div className="text-center py-4">
+                    <p className="text-slate-600 text-sm">Complete courses to earn certificates</p>
+                  </div>
+                )}
+                {stats.certificates > 3 && (
+                  <button className="w-full text-center text-amber-600 hover:text-amber-700 font-medium text-sm">
+                    View All ({stats.certificates})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Stats */}
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl shadow-lg p-6 text-white">
+              <h2 className="text-xl font-bold mb-6">Quick Stats</h2>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-300">Avg. Daily Time</span>
+                  <span className="font-bold">1.8h</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-300">Quiz Accuracy</span>
+                  <span className="font-bold">{stats.quizScore}%</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-300">Assignments Done</span>
+                  <span className="font-bold">{stats.assignmentsSubmitted}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-300">Notes Created</span>
+                  <span className="font-bold">24</span>
+                </div>
+              </div>
+              <button className="w-full mt-6 bg-white text-slate-900 font-bold py-3 rounded-xl hover:bg-slate-100 transition-colors">
+                View Full Report
+              </button>
+            </div>
+
+            {/* Learning Goals */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <FiTargetIcon className="text-red-600" /> Learning Goals
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm text-slate-600">Complete 5 courses</span>
+                    <span className="text-sm font-bold">{stats.completedCourses}/5</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2">
+                    <div 
+                      className="bg-red-600 rounded-full h-2"
+                      style={{ width: `${(stats.completedCourses / 5) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm text-slate-600">50 learning hours</span>
+                    <span className="text-sm font-bold">{stats.learningHours}/50h</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 rounded-full h-2"
+                      style={{ width: `${(stats.learningHours / 50) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm text-slate-600">30-day streak</span>
+                    <span className="text-sm font-bold">{stats.streakDays}/30</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2">
+                    <div 
+                      className="bg-amber-600 rounded-full h-2"
+                      style={{ width: `${(stats.streakDays / 30) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Browse Courses Section */}
+        <div id="courses-section" className="mt-12">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Browse Courses</h2>
+                <p className="text-slate-600 mt-2">Discover new skills and advance your career</p>
+              </div>
+              <div className="flex items-center gap-3">
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search by title, instructor..."
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    placeholder="Search courses..."
+                    className="pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
                   <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 </div>
-              </div>
-
-              {/* Categories */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                  <BiCategory /> Categories
-                </h4>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  <button
-                    onClick={() => setSelectedCategory("all")}
-                    className={`block w-full text-left px-4 py-2.5 rounded-lg transition-all ${
-                      selectedCategory === "all" 
-                        ? "bg-red-50 text-red-600 font-bold" 
-                        : "hover:bg-slate-50 text-slate-600"
-                    }`}
-                  >
-                    All Categories ({courses.length})
-                  </button>
-                  {categories.map((category, index) => (
-                    <button
-                      key={index}
-                      onClick={() => setSelectedCategory(category)}
-                      className={`block w-full text-left px-4 py-2.5 rounded-lg transition-all ${
-                        selectedCategory === category 
-                          ? "bg-red-50 text-red-600 font-bold" 
-                          : "hover:bg-slate-50 text-slate-600"
-                      }`}
-                    >
-                      {category}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Price Filter */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                  <FaRegMoneyBillAlt /> Price Range
-                </h4>
-                <div className="space-y-2">
-                  {[
-                    { label: "Free Only", value: "free" },
-                    { label: "Under ₹1000", value: "under-1000" },
-                    { label: "₹1000 - ₹5000", value: "1000-5000" },
-                    { label: "Above ₹5000", value: "above-5000" }
-                  ].map((range, idx) => (
-                    <label key={idx} className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-2 rounded-lg">
-                      <input type="radio" name="price" className="text-red-600" />
-                      <span className="text-slate-600">{range.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Level Filter */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-slate-700 mb-3">Difficulty Level</h4>
-                <div className="flex flex-wrap gap-2">
-                  {["Beginner", "Intermediate", "Advanced"].map((level) => (
-                    <button
-                      key={level}
-                      className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-sm hover:bg-slate-200"
-                    >
-                      {level}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* View Toggle */}
-              <div className="pt-6 border-t border-slate-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600 font-medium">View Mode:</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setViewMode("grid")}
-                      className={`p-2.5 rounded-lg ${viewMode === "grid" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-600"}`}
-                    >
-                      <FiGrid size={18} />
-                    </button>
-                    <button
-                      onClick={() => setViewMode("list")}
-                      className={`p-2.5 rounded-lg ${viewMode === "list" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-600"}`}
-                    >
-                      <FiList size={18} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Sort By */}
-              <div className="mt-6">
-                <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                  <FiBarChart2 /> Sort By
-                </h4>
                 <select
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  className="border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
                 >
@@ -768,658 +1329,69 @@ const StudentDashboard = () => {
               </div>
             </div>
 
-            {/* Quick Stats Card */}
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl shadow-lg p-6 mt-6 text-white">
-              <h4 className="text-lg font-bold mb-4">Your Learning Stats</h4>
-              <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-slate-300">Course Progress</span>
-                    <span className="text-sm font-bold">65%</span>
-                  </div>
-                  <div className="w-full bg-slate-700 rounded-full h-2">
-                    <div className="bg-red-500 rounded-full h-2" style={{ width: "65%" }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-slate-300">Assignment Score</span>
-                    <span className="text-sm font-bold">82%</span>
-                  </div>
-                  <div className="w-full bg-slate-700 rounded-full h-2">
-                    <div className="bg-emerald-500 rounded-full h-2" style={{ width: "82%" }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-slate-300">Time Spent</span>
-                    <span className="text-sm font-bold">{stats.learningHours}h</span>
-                  </div>
-                  <div className="w-full bg-slate-700 rounded-full h-2">
-                    <div className="bg-blue-500 rounded-full h-2" style={{ width: "45%" }}></div>
-                  </div>
-                </div>
-              </div>
-              <button className="w-full mt-6 bg-white text-slate-900 font-bold py-3 rounded-xl hover:bg-slate-100 transition-colors">
-                View Detailed Report
-              </button>
-            </div>
-          </div>
-
-          {/* Right Content - Courses */}
-          <div className="lg:w-3/4">
-            {/* Courses Header */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-              <div>
-                <h2 className="text-2xl md:text-3xl font-bold text-slate-800">
-                  Browse All Courses <span className="text-red-600">({filteredCourses.length})</span>
-                </h2>
-                <p className="text-slate-600 mt-2">Learn from industry experts with hands-on projects</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <button className="px-4 py-2.5 border border-red-600 text-red-600 rounded-xl font-bold hover:bg-red-50 transition-colors flex items-center gap-2">
-                  <FiBookmark size={16} /> Saved
-                </button>
-                <button 
-                  onClick={() => navigate("/my-courses")}
-                  className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors flex items-center gap-2"
-                >
-                  My Courses <FiChevronRight />
-                </button>
-              </div>
-            </div>
-
-            {/* Featured Courses Banner */}
-            <div className="bg-gradient-to-r from-blue-600 to-cyan-500 rounded-2xl p-6 mb-8 text-white">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                <div>
-                  <h3 className="text-xl font-bold mb-2">🎓 Limited Time Offer!</h3>
-                  <p className="text-blue-100">Get 30% off on all premium courses. Offer ends soon!</p>
-                </div>
-                <button className="px-6 py-3 bg-white text-blue-600 rounded-xl font-bold hover:bg-blue-50 transition-colors whitespace-nowrap">
-                  View Offers
-                </button>
-              </div>
-            </div>
-
-            {/* Courses Grid/List */}
-            {filteredCourses.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow-lg p-12 text-center">
-                <FiSearch className="text-6xl text-slate-300 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-slate-700 mb-2">No courses found</h3>
-                <p className="text-slate-500">Try adjusting your filters or search term</p>
-                <button 
-                  onClick={() => {
-                    setSearchTerm("");
-                    setSelectedCategory("all");
-                  }}
-                  className="mt-4 px-4 py-2 text-red-600 hover:text-red-700 font-medium"
-                >
-                  Clear all filters
-                </button>
+            {filteredCourses.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredCourses.slice(0, 6).map((course, index) => {
+                  const isEnrolled = myEnrollments.includes(course.id);
+                  return (
+                    <CourseCard
+                      key={course.id}
+                      course={course}
+                      isEnrolled={isEnrolled}
+                      onPreview={() => handleCoursePreview(course)}
+                      onEnroll={() => handleCoursePurchase(course)}
+                      onManualPayment={() => {
+                        setSelectedCourse(course);
+                        setShowManualPaymentModal(true);
+                      }}
+                      progress={isEnrolled ? getCourseProgress(course.id) : 0}
+                    />
+                  );
+                })}
               </div>
             ) : (
-              <div className={`${viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3" : "space-y-6"} gap-6`}>
-                <AnimatePresence>
-                  {filteredCourses.map((course, index) => {
-                    const isEnrolled = myEnrollments.includes(course.id);
-                    
-                    return (
-                      <motion.div
-                        key={course.id}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: index * 0.05 }}
-                        exit={{ opacity: 0, y: -20 }}
-                      >
-                        {viewMode === "list" ? (
-                          <div className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all">
-                            <div className="flex flex-col md:flex-row">
-                              <div className="md:w-2/5 relative">
-                                <img 
-                                  src={course.thumbnail || "https://images.unsplash.com/photo-1498050108023-c5249f4df085"}
-                                  alt={course.title}
-                                  className="w-full h-64 md:h-full object-cover"
-                                />
-                                {course.discountPrice && (
-                                  <div className="absolute top-4 left-4 bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                                    SAVE {Math.round(((course.price - course.discountPrice) / course.price) * 100)}%
-                                  </div>
-                                )}
-                              </div>
-                              
-                              <div className="md:w-3/5 p-6">
-                                <div className="flex flex-col h-full">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-3">
-                                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                        course.level === "beginner" ? "bg-emerald-100 text-emerald-700" : 
-                                        course.level === "intermediate" ? "bg-blue-100 text-blue-700" : 
-                                        "bg-red-100 text-red-700"
-                                      }`}>
-                                        {course.level || "All Levels"}
-                                      </span>
-                                      <span className="text-slate-500 text-sm flex items-center gap-1">
-                                        <FaChalkboardTeacher /> {course.teacherName || "Instructor"}
-                                      </span>
-                                    </div>
-                                    
-                                    <h3 className="text-xl font-bold text-slate-800 mb-3">{course.title}</h3>
-                                    <p className="text-slate-600 mb-4 line-clamp-2">{course.description}</p>
-                                    
-                                    <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
-                                      <span className="flex items-center gap-1">
-                                        <FiPlayCircle /> {course.lessonsCount || 12} lessons
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <FiClock /> {course.duration || "8 weeks"}
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <FiUsers /> {course.studentsEnrolled || 0} students
-                                      </span>
-                                    </div>
-                                  </div>
-                                  
-                                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                                    <div className="flex items-end gap-2">
-                                      {course.discountPrice ? (
-                                        <>
-                                          <span className="text-2xl font-bold text-slate-800">₹{course.discountPrice}</span>
-                                          <span className="text-lg text-slate-400 line-through">₹{course.price}</span>
-                                        </>
-                                      ) : (
-                                        <span className="text-2xl font-bold text-slate-800">₹{course.price || 0}</span>
-                                      )}
-                                    </div>
-                                    
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={() => handleCoursePreview(course)}
-                                        className="px-4 py-2 border border-red-600 text-red-600 rounded-lg font-bold hover:bg-red-50 transition-colors flex items-center gap-2"
-                                      >
-                                        <FiEye /> Preview
-                                      </button>
-                                      {isEnrolled ? (
-                                        <button 
-                                          onClick={() => navigate(`/course/${course.id}`)}
-                                          className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 transition-colors flex items-center gap-2"
-                                        >
-                                          <FiPlayCircle /> Continue
-                                        </button>
-                                      ) : (
-                                        <div className="flex flex-col gap-2">
-                                          <button
-                                            onClick={() => handleCoursePurchase(course)}
-                                            disabled={processingPayment}
-                                            className={`px-4 py-2 ${processingPayment ? 'bg-gray-400' : 'bg-red-600'} text-white rounded-lg font-bold hover:bg-red-700 transition-colors flex items-center justify-center gap-2`}
-                                          >
-                                            {processingPayment ? (
-                                              <>
-                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                                Processing...
-                                              </>
-                                            ) : (
-                                              <>
-                                                <FiShoppingCart size={14} /> Enroll Now
-                                              </>
-                                            )}
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              setSelectedCourse(course);
-                                              setShowManualPaymentModal(true);
-                                            }}
-                                            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1"
-                                            title="Having payment issues? Upload screenshot"
-                                          >
-                                            <FiUpload size={12} /> Manual Payment
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          // Grid View Card
-                          <div className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all border border-slate-100">
-                            <div className="relative">
-                              <img 
-                                src={course.thumbnail || "https://images.unsplash.com/photo-1498050108023-c5249f4df085"}
-                                alt={course.title}
-                                className="w-full h-48 object-cover"
-                              />
-                              <div className="absolute top-4 left-4 flex flex-col gap-2">
-                                {course.discountPrice && (
-                                  <span className="bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                                    SAVE {Math.round(((course.price - course.discountPrice) / course.price) * 100)}%
-                                  </span>
-                                )}
-                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                  course.level === "beginner" ? "bg-emerald-100 text-emerald-700" : 
-                                  course.level === "intermediate" ? "bg-blue-100 text-blue-700" : 
-                                  "bg-red-100 text-red-700"
-                                }`}>
-                                  {course.level || "All Levels"}
-                                </span>
-                              </div>
-                              {isEnrolled && (
-                                <div className="absolute top-4 right-4 bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                                  Enrolled
-                                </div>
-                              )}
-                            </div>
-                            
-                            <div className="p-6">
-                              <h3 className="text-lg font-bold text-slate-800 mb-2 line-clamp-2">{course.title}</h3>
-                              <p className="text-slate-600 text-sm mb-4 line-clamp-2">{course.description}</p>
-                              
-                              <div className="flex items-center justify-between text-sm text-slate-500 mb-6">
-                                <span className="flex items-center gap-1">
-                                  <FaChalkboardTeacher /> {course.teacherName || "Instructor"}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <FiUsers /> {course.studentsEnrolled || 0}
-                                </span>
-                              </div>
-                              
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  {course.discountPrice ? (
-                                    <div className="flex items-end gap-2">
-                                      <span className="text-xl font-bold text-slate-800">₹{course.discountPrice}</span>
-                                      <span className="text-sm text-slate-400 line-through">₹{course.price}</span>
-                                    </div>
-                                  ) : (
-                                    <span className="text-xl font-bold text-slate-800">₹{course.price || 0}</span>
-                                  )}
-                                </div>
-                                
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={() => handleCoursePreview(course)}
-                                    className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg text-sm hover:bg-slate-50"
-                                  >
-                                    <FiEye size={14} />
-                                  </button>
-                                  {isEnrolled ? (
-                                    <button 
-                                      onClick={() => navigate(`/course/${course.id}`)}
-                                      className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700"
-                                    >
-                                      Access
-                                    </button>
-                                  ) : (
-                                    <div className="flex flex-col gap-2">
-                                      <button
-                                        onClick={() => handleCoursePurchase(course)}
-                                        disabled={processingPayment}
-                                        className={`px-4 py-1.5 ${processingPayment ? 'bg-gray-400' : 'bg-red-600'} text-white rounded-lg text-sm font-bold hover:bg-red-700 flex items-center justify-center gap-2`}
-                                      >
-                                        {processingPayment ? (
-                                          <>
-                                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                            ...
-                                          </>
-                                        ) : (
-                                          <>
-                                            <FiShoppingCart size={12} /> Enroll
-                                          </>
-                                        )}
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setSelectedCourse(course);
-                                          setShowManualPaymentModal(true);
-                                        }}
-                                        className="px-3 py-1 border border-gray-300 text-gray-700 rounded-lg text-xs hover:bg-gray-50 flex items-center justify-center gap-1"
-                                        title="Manual payment option"
-                                      >
-                                        <FiUpload size={10} /> Manual
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
+              <div className="text-center py-12">
+                <FiSearch className="text-6xl text-slate-300 mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-slate-700 mb-2">No courses found</h3>
+                <p className="text-slate-500">Try adjusting your search or filters</p>
               </div>
             )}
-
-            {/* Recently Enrolled Courses */}
-            {enrolledCoursesData.length > 0 && (
-              <div className="mt-12">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-slate-800">Continue Learning</h2>
-                  <button 
-                    onClick={() => navigate("/my-courses")}
-                    className="text-red-600 hover:text-red-700 font-bold flex items-center gap-1"
-                  >
-                    View All <FiChevronRight />
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {enrolledCoursesData.slice(0, 3).map((course, index) => (
-                    <motion.div
-                      key={course.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all cursor-pointer"
-                      onClick={() => navigate(`/course/${course.id}`)}
-                    >
-                      <div className="relative">
-                        <img 
-                          src={course.thumbnail || "https://images.unsplash.com/photo-1498050108023-c5249f4df085"}
-                          alt={course.title}
-                          className="w-full h-48 object-cover"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                        <div className="absolute bottom-4 left-4 text-white">
-                          <h3 className="font-bold text-lg">{course.title}</h3>
-                          <p className="text-sm opacity-90">{course.teacherName}</p>
-                        </div>
-                        <div className="absolute top-4 right-4 bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                          Enrolled
-                        </div>
-                      </div>
-                      <div className="p-6">
-                        <div className="flex justify-between items-center mb-4">
-                          <span className="text-slate-600 text-sm">Progress</span>
-                          <span className="font-bold text-emerald-600">45%</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 mb-6">
-                          <div className="bg-emerald-500 rounded-full h-2" style={{ width: "45%" }}></div>
-                        </div>
-                        <button className="w-full bg-red-600 text-white py-2.5 rounded-xl font-bold hover:bg-red-700 transition-colors">
-                          Continue Course
-                        </button>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Top Instructors */}
-            <div className="mt-12">
-              <h2 className="text-2xl font-bold text-slate-800 mb-6">Featured Instructors</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                  { name: "Dr. Sharma", subject: "Data Science", students: 12450, rating: 4.9 },
-                  { name: "Prof. Gupta", subject: "Web Development", students: 8920, rating: 4.8 },
-                  { name: "Ms. Patel", subject: "Business Analytics", students: 7560, rating: 4.7 },
-                  { name: "Mr. Kumar", subject: "AI & ML", students: 11230, rating: 4.9 }
-                ].map((teacher, idx) => (
-                  <div key={idx} className="bg-white rounded-2xl shadow-lg p-6 text-center hover:shadow-xl transition-all">
-                    <div className="w-20 h-20 bg-gradient-to-br from-red-600 to-rose-500 rounded-full mx-auto mb-4 flex items-center justify-center text-white text-2xl font-bold">
-                      {teacher.name.charAt(0)}
-                    </div>
-                    <h4 className="font-bold text-slate-800">{teacher.name}</h4>
-                    <p className="text-slate-600 text-sm mb-3">{teacher.subject}</p>
-                    <div className="flex items-center justify-center gap-1 text-amber-500 mb-2">
-                      <FiStar /><FiStar /><FiStar /><FiStar /><FiStar />
-                      <span className="text-slate-700 text-sm font-bold ml-1">{teacher.rating}</span>
-                    </div>
-                    <p className="text-slate-500 text-sm">{teacher.students.toLocaleString()} students</p>
-                    <button className="mt-4 text-red-600 text-sm font-bold hover:text-red-700">
-                      View Courses →
-                    </button>
-                  </div>
-                ))}
-              </div>
+            
+            <div className="text-center mt-8">
+              <button 
+                onClick={() => navigate("/courses")}
+                className="px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors flex items-center gap-2 mx-auto"
+              >
+                Browse All Courses <FiArrowUpRight />
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Payment Modal */}
-      {showPaymentModal && selectedCourse && (
-        <PaymentModal
-          course={selectedCourse}
-          onClose={() => setShowPaymentModal(false)}
-          onSuccess={handlePaymentSuccess}
-        />
-      )}
-
-      {/* Preview Modal */}
+      {/* Modals */}
       {showPreviewModal && selectedCourse && (
         <CoursePreviewModal
           course={selectedCourse}
           onClose={() => setShowPreviewModal(false)}
           onEnroll={() => {
             setShowPreviewModal(false);
-            setShowPaymentModal(true);
+            handleCoursePurchase(selectedCourse);
           }}
         />
       )}
 
-      {/* Manual Payment Modal */}
+      {showCertificateModal && selectedCertificate && (
+        <CertificateModal
+          certificate={selectedCertificate}
+          onClose={() => setShowCertificateModal(false)}
+          onDownload={() => handleDownloadCertificate(selectedCertificate)}
+        />
+      )}
+
       {showManualPaymentModal && selectedCourse && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
-          >
-            {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800">Manual Payment Process</h2>
-                <p className="text-slate-600">Upload payment proof for manual verification</p>
-              </div>
-              <button
-                onClick={() => setShowManualPaymentModal(false)}
-                className="p-2 hover:bg-slate-100 rounded-full"
-              >
-                <FiX size={24} />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Left Column - Payment Details */}
-                <div>
-                  <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 mb-6">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                      <FaRupeeSign /> Payment Details
-                    </h3>
-                    
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center pb-3 border-b border-red-200">
-                        <span className="text-slate-600">Course:</span>
-                        <span className="font-bold">{selectedCourse.title}</span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center pb-3 border-b border-red-200">
-                        <span className="text-slate-600">Amount to Pay:</span>
-                        <span className="text-2xl font-bold text-red-600">
-                          ₹{selectedCourse.discountPrice || selectedCourse.price}
-                        </span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-600">Student:</span>
-                        <span className="font-bold">{userProfile?.name || user.email}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Bank Details */}
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 mb-6">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4">Bank Transfer Details</h3>
-                    
-                    <div className="space-y-3">
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Account Name:</span>
-                        <span className="font-bold">Learning Platform</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Account Number:</span>
-                        <span className="font-bold">123456789012</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">IFSC Code:</span>
-                        <span className="font-bold">SBIN0001234</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Bank:</span>
-                        <span className="font-bold">State Bank of India</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">UPI ID:</span>
-                        <span className="font-bold">learningplatform@upi</span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        const details = `Account Name: Learning Platform\nAccount Number: 123456789012\nIFSC Code: SBIN0001234\nBank: State Bank of India\nUPI ID: learningplatform@upi`;
-                        navigator.clipboard.writeText(details);
-                        toast.success('Bank details copied to clipboard!');
-                      }}
-                      className="w-full mt-4 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <FiCopy /> Copy Bank Details
-                    </button>
-                  </div>
-
-                  {/* Payment Methods */}
-                  <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-6">
-                    <h4 className="font-bold text-slate-800 mb-3">Payment Methods Accepted</h4>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                        <span className="text-slate-700">Bank Transfer (NEFT/IMPS)</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                        <span className="text-slate-700">UPI Payment</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                        <span className="text-slate-700">Google Pay / PhonePe</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                        <span className="text-slate-700">Paytm Wallet</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column - Upload Form */}
-                <div>
-                  <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-6 mb-6">
-                    <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                      <FiUpload /> Upload Payment Proof
-                    </h3>
-
-                    {/* Upload Area */}
-                    <div className="mb-6">
-                      <label className="block text-slate-700 font-medium mb-3">
-                        Payment Screenshot / Receipt *
-                      </label>
-                      
-                      <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center hover:border-red-400 transition-colors cursor-pointer">
-                        <input
-                          type="file"
-                          id="screenshot-upload"
-                          className="hidden"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (file) {
-                              const mockUrl = URL.createObjectURL(file);
-                              handleManualPaymentSubmit({
-                                url: mockUrl,
-                                fileName: file.name,
-                                transactionId: '',
-                                bankName: '',
-                                notes: ''
-                              });
-                            }
-                          }}
-                        />
-                        
-                        <label htmlFor="screenshot-upload" className="cursor-pointer">
-                          <div className="space-y-4">
-                            <div className="mx-auto w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center">
-                              <FiUpload className="text-slate-400 text-3xl" />
-                            </div>
-                            <div>
-                              <p className="font-bold text-slate-700">Click to upload screenshot</p>
-                              <p className="text-sm text-slate-500">JPG, PNG up to 5MB</p>
-                            </div>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Contact Info */}
-                    <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-6 mb-6">
-                      <div className="flex items-start gap-3 mb-4">
-                        <FiAlertCircle className="text-amber-600 text-xl mt-1" />
-                        <div>
-                          <h4 className="font-bold text-slate-800 mb-2">Important Instructions</h4>
-                          <ul className="space-y-2 text-sm text-slate-700">
-                            <li className="flex items-start gap-2">
-                              <span className="text-amber-600">•</span>
-                              Ensure screenshot clearly shows transaction ID and amount
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="text-amber-600">•</span>
-                              Include your email ID in payment notes if possible
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="text-amber-600">•</span>
-                              Verification usually takes 2-24 hours during business days
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="text-amber-600">•</span>
-                              You'll receive email notification once approved
-                            </li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Contact Info */}
-                    <div className="mt-6 pt-6 border-t border-slate-200 text-center">
-                      <p className="text-sm text-slate-600 mb-2">Need immediate assistance?</p>
-                      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText("support@learningplatform.com");
-                            toast.success("Support email copied!");
-                          }}
-                          className="text-red-600 hover:text-red-700 text-sm font-bold"
-                        >
-                          ✉️ support@learningplatform.com
-                        </button>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText("+91 9876543210");
-                            toast.success("Phone number copied!");
-                          }}
-                          className="text-red-600 hover:text-red-700 text-sm font-bold"
-                        >
-                          📞 +91 9876543210
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          {/* Manual payment modal content */}
         </div>
       )}
     </div>

@@ -2,7 +2,7 @@ import React from 'react';
 import { FiTrendingUp, FiTrendingDown } from 'react-icons/fi';
 
 const StatCard = ({ title, value, icon, color = "sky", trend, className = "" }) => {
-  // Dynamic gradient colors for the progress bar
+  
   const colorClasses = {
     sky: "bg-gradient-to-br from-sky-500 to-cyan-500",
     indigo: "bg-gradient-to-br from-indigo-500 to-purple-500",
@@ -10,7 +10,6 @@ const StatCard = ({ title, value, icon, color = "sky", trend, className = "" }) 
     rose: "bg-gradient-to-br from-rose-500 to-pink-500"
   };
 
-  // Background colors for the icon container
   const iconBgClasses = {
     sky: "bg-sky-100 text-sky-600",
     indigo: "bg-indigo-100 text-indigo-600",
