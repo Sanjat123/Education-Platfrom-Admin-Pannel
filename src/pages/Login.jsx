@@ -10,10 +10,11 @@ import {
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  updateProfile
 } from "firebase/auth";
-import { doc, getDoc, collection, query, where, getDocs, setDoc, updateDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
+import { doc, getDoc, collection, query, where, getDocs, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   FiMail, FiLock, FiSmartphone, FiArrowLeft, FiUser, FiShield,
@@ -22,7 +23,8 @@ import {
   FiMessageSquare, FiSend, FiHome, FiUsers, FiTrendingUp,
   FiGithub, FiUserPlus, FiEdit2, FiCalendar,
   FiMapPin, FiBriefcase, FiBook, FiCreditCard,
-  FiHash, FiUserCheck, FiStar, FiAward
+  FiHash, FiUserCheck, FiStar, FiAward, FiExternalLink,
+  FiShuffle
 } from "react-icons/fi";
 import { FcGoogle } from "react-icons/fc";
 import toast, { Toaster } from "react-hot-toast";
@@ -30,7 +32,7 @@ import toast, { Toaster } from "react-hot-toast";
 const Login = () => {
   const [selectedRole, setSelectedRole] = useState(null); 
   const [step, setStep] = useState("selection");
-  const [authMethod, setAuthMethod] = useState("phone"); // 'phone', 'email', 'password', 'google', 'github'
+  const [authMethod, setAuthMethod] = useState("phone");
   
   // Form states
   const [email, setEmail] = useState("");
@@ -39,7 +41,7 @@ const Login = () => {
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [showPassword, setShowPassword] = useState(false);
   
-  // Registration form states (for students)
+  // Registration form states
   const [fullName, setFullName] = useState("");
   const [studentEmail, setStudentEmail] = useState("");
   const [studentPhone, setStudentPhone] = useState("");
@@ -58,7 +60,7 @@ const Login = () => {
   const [resendTimer, setResendTimer] = useState(0);
   const [rememberMe, setRememberMe] = useState(false);
   const [forgotPassword, setForgotPassword] = useState(false);
-  const [loginMode, setLoginMode] = useState("login"); // 'login', 'register', 'complete-profile'
+  const [loginMode, setLoginMode] = useState("login");
   const [socialUserData, setSocialUserData] = useState(null);
   
   const navigate = useNavigate();
@@ -219,15 +221,19 @@ const Login = () => {
   // Initialize reCAPTCHA
   useEffect(() => {
     if (!window.recaptchaVerifier && step === "form") {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        'size': 'invisible',
-        'callback': (response) => {
-          console.log("reCAPTCHA verified", response);
-        },
-        'expired-callback': () => {
-          console.log("reCAPTCHA expired");
-        }
-      });
+      try {
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          'size': 'invisible',
+          'callback': (response) => {
+            console.log("reCAPTCHA verified", response);
+          },
+          'expired-callback': () => {
+            console.log("reCAPTCHA expired");
+          }
+        });
+      } catch (error) {
+        console.error("reCAPTCHA initialization error:", error);
+      }
     }
   }, [step]);
 
@@ -289,7 +295,7 @@ const Login = () => {
       if (selectedRole === "teacher") {
         const q = query(
           collection(db, "users"), 
-          where("phone", "==", phone), 
+          where("phone", "==", `+91${phone}`), 
           where("role", "==", "teacher")
         );
         const snap = await getDocs(q);
@@ -298,14 +304,21 @@ const Login = () => {
         }
         
         const teacherData = snap.docs[0].data();
-        if (!teacherData.adminVerified) {
+        const teacherStatus = teacherData.status?.toLowerCase().trim();
+        if (teacherStatus !== "active") {
           throw new Error("Your account is pending admin approval.");
         }
       }
 
       const formatPhone = phone.startsWith("+") ? phone : `+91${phone}`;
       
-      // Use the reCAPTCHA verifier
+      // Initialize reCAPTCHA if not already
+      if (!window.recaptchaVerifier) {
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          'size': 'invisible',
+        });
+      }
+      
       const appVerifier = window.recaptchaVerifier;
       
       const confirmation = await signInWithPhoneNumber(auth, formatPhone, appVerifier);
@@ -350,20 +363,18 @@ const Login = () => {
         throw new Error("Please enter 6-digit OTP");
       }
 
-      let credential;
+      let userCredential;
       
       if (confirmationResult) {
-        // For signInWithPhoneNumber flow
-        const userCredential = await confirmationResult.confirm(otpCode);
-        await handleSuccessfulLogin(userCredential.user);
+        userCredential = await confirmationResult.confirm(otpCode);
       } else if (verificationId) {
-        // For PhoneAuthProvider flow
-        credential = PhoneAuthProvider.credential(verificationId, otpCode);
-        const userCredential = await signInWithCredential(auth, credential);
-        await handleSuccessfulLogin(userCredential.user);
+        const credential = PhoneAuthProvider.credential(verificationId, otpCode);
+        userCredential = await signInWithCredential(auth, credential);
       } else {
         throw new Error("OTP session expired. Please request a new OTP.");
       }
+      
+      await handleSuccessfulLogin(userCredential.user, "phone");
       
     } catch (err) {
       console.error("OTP verification error:", err);
@@ -394,16 +405,18 @@ const Login = () => {
       }
 
       const userCred = await signInWithEmailAndPassword(auth, email, password);
-      await handleSuccessfulLogin(userCred.user);
+      
+      // ✅ FIX ADDED HERE: Admin bypass aur status check
+      await handleSuccessfulLogin(userCred.user, "email");
       
     } catch (err) {
       console.error("Login error:", err);
       
       if (err.code === "auth/user-not-found") {
-        // For students, show registration option
         if (selectedRole === "student") {
           toast.error("No account found. Please register first.");
           setLoginMode("register");
+          setStudentEmail(email);
         } else {
           toast.error("No account found with this email");
         }
@@ -446,13 +459,14 @@ const Login = () => {
           email: result.user.email,
           name: result.user.displayName || "",
           phone: result.user.phoneNumber || "",
+          photoURL: result.user.photoURL || "",
           provider: providerType
         });
         
         // Pre-fill form with social data
         setFullName(result.user.displayName || "");
         setStudentEmail(result.user.email || "");
-        setStudentPhone(result.user.phoneNumber || "");
+        setStudentPhone(result.user.phoneNumber?.replace('+91', '') || "");
         
         // Switch to complete profile mode
         setLoginMode("complete-profile");
@@ -479,7 +493,7 @@ const Login = () => {
       }
       
       // Existing user - proceed with login
-      await handleSuccessfulLogin(result.user);
+      await handleSuccessfulLogin(result.user, providerType);
       
     } catch (err) {
       console.error("Social login error:", err);
@@ -505,7 +519,9 @@ const Login = () => {
       }
 
       const userCred = await signInWithEmailAndPassword(auth, email, password);
-      await handleSuccessfulLogin(userCred.user);
+      
+      // ✅ FIX ADDED HERE: Admin bypass aur status check
+      await handleSuccessfulLogin(userCred.user, "password");
       
     } catch (err) {
       console.error("Admin login error:", err);
@@ -555,7 +571,7 @@ const Login = () => {
       }
 
       // Check if phone already exists
-      const phoneQuery = query(collection(db, "users"), where("phone", "==", studentPhone));
+      const phoneQuery = query(collection(db, "users"), where("phone", "==", `+91${studentPhone}`));
       const phoneSnap = await getDocs(phoneQuery);
       
       if (!phoneSnap.empty) {
@@ -566,39 +582,48 @@ const Login = () => {
       const userCred = await createUserWithEmailAndPassword(auth, studentEmail, password);
       const user = userCred.user;
 
+      // Update display name
+      await updateProfile(user, {
+        displayName: fullName
+      });
+
       // Create user profile in Firestore
       const userProfile = {
         uid: user.uid,
         name: fullName,
         email: studentEmail,
-        phone: studentPhone,
+        phone: `+91${studentPhone}`,
         dateOfBirth: dateOfBirth || null,
         gender: gender || null,
         address: address || null,
         educationLevel: educationLevel || null,
         interests: interests,
         role: "student",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        status: "active", // ✅ Default status set to active for new students
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         loginMethod: "email",
-        lastLogin: new Date().toISOString(),
-        status: "active",
-        emailVerified: false,
+        lastLogin: serverTimestamp(),
+        emailVerified: user.emailVerified,
         profileComplete: true,
         studentId: `STU${Date.now().toString().slice(-8)}`,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random&color=fff&bold=true`
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random&color=fff&bold=true`,
+        preferences: {
+          notifications: true,
+          theme: "light",
+          language: "en"
+        }
       };
 
       await setDoc(doc(db, "users", user.uid), userProfile);
 
-      // Send welcome email (in real app, implement email service)
       toast.success("Account created successfully! Welcome to Student Nagari!");
       
       // Update local state
       setEmail(studentEmail);
       
       // Proceed with login
-      await handleSuccessfulLogin(user);
+      await handleSuccessfulLogin(user, "email");
       
     } catch (err) {
       console.error("Registration error:", err);
@@ -625,28 +650,37 @@ const Login = () => {
         uid: socialUserData.uid,
         name: fullName,
         email: studentEmail,
-        phone: studentPhone || "",
+        phone: studentPhone ? `+91${studentPhone}` : "",
         dateOfBirth: dateOfBirth || null,
         gender: gender || null,
         address: address || null,
         educationLevel: educationLevel || null,
         interests: interests,
         role: "student",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        status: "active", // ✅ Default status set to active for new students
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         loginMethod: socialUserData.provider,
-        lastLogin: new Date().toISOString(),
-        status: "active",
+        lastLogin: serverTimestamp(),
         emailVerified: true,
         profileComplete: true,
         studentId: `STU${Date.now().toString().slice(-8)}`,
-        avatar: socialUserData.provider === 'google' ? 
-          socialUserData.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random&color=fff&bold=true` :
-          `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random&color=fff&bold=true`,
-        socialProvider: socialUserData.provider
+        avatar: socialUserData.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random&color=fff&bold=true`,
+        socialProvider: socialUserData.provider,
+        preferences: {
+          notifications: true,
+          theme: "light",
+          language: "en"
+        }
       };
 
       await setDoc(doc(db, "users", socialUserData.uid), userProfile);
+
+      // Update auth profile
+      await updateProfile(auth.currentUser, {
+        displayName: fullName,
+        photoURL: socialUserData.photoURL
+      });
 
       toast.success("Profile completed successfully!");
       
@@ -662,7 +696,7 @@ const Login = () => {
     }
   };
 
-  const handleSuccessfulLogin = async (user) => {
+  const handleSuccessfulLogin = async (user, loginMethod = "unknown") => {
     try {
       const userDoc = await getDoc(doc(db, "users", user.uid));
       
@@ -672,16 +706,36 @@ const Login = () => {
       
       const userData = userDoc.data();
       
+      // ✅ FIX 1: Case-insensitive role check
+      const userRole = userData.role?.toLowerCase().trim();
+      const requiredRole = selectedRole?.toLowerCase().trim();
+      
+      // ✅ FIX 2: Admin bypass aur status check
+      // Agar user admin hai to status check na karein (direct access)
+      // Agar admin nahi hai aur status active nahi hai to block karein
+      if (userRole !== "admin") {
+        const userStatus = userData.status?.toLowerCase().trim();
+        if (userStatus !== "active") {
+          await auth.signOut();
+          throw new Error("Your account is not active. Please contact admin.");
+        }
+      }
+      
       // Role verification (case-insensitive)
-      if (userData.role?.toLowerCase() !== selectedRole) {
-        throw new Error(`Access denied. You are registered as ${userData.role}, not ${selectedRole}.`);
+      if (userRole !== requiredRole) {
+        // Special case: teacher can login as faculty
+        if (userRole === "teacher" && requiredRole === "faculty") {
+          // Allow login
+        } else {
+          throw new Error(`Access denied. You are registered as ${userData.role}, not ${selectedRole}.`);
+        }
       }
 
       // Update last login timestamp
       await updateDoc(doc(db, "users", user.uid), {
-        lastLogin: new Date().toISOString(),
-        loginMethod: authMethod,
-        lastIp: "..." // You can get IP from a service
+        lastLogin: serverTimestamp(),
+        loginMethod: loginMethod,
+        lastActive: serverTimestamp()
       });
 
       // Show success toast
@@ -689,6 +743,7 @@ const Login = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
           className="bg-white p-4 rounded-2xl shadow-xl border border-slate-200 max-w-md"
         >
           <div className="flex items-center gap-3">
@@ -722,6 +777,7 @@ const Login = () => {
       console.error("Login verification error:", err);
       await auth.signOut();
       toast.error(err.message || "Login failed");
+      setLoading(false);
     }
   };
 
@@ -786,6 +842,19 @@ const Login = () => {
     );
   };
 
+  // Load remembered data
+  useEffect(() => {
+    if (step === "form") {
+      const rememberedRole = localStorage.getItem('rememberedRole');
+      const rememberedEmail = localStorage.getItem('rememberedEmail');
+      
+      if (rememberedEmail && selectedRole === 'admin') {
+        setEmail(rememberedEmail);
+        setRememberMe(true);
+      }
+    }
+  }, [step, selectedRole]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4 md:p-6 font-sans relative overflow-hidden">
       {/* Background Pattern */}
@@ -821,7 +890,17 @@ const Login = () => {
         <FiUsers />
       </motion.div>
 
-      <Toaster position="top-right" />
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderRadius: '12px',
+          },
+        }}
+      />
       
       {/* Hidden reCAPTCHA container */}
       <div id="recaptcha-container"></div>
@@ -833,29 +912,35 @@ const Login = () => {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-10 md:mb-16"
         >
-          <div className="relative inline-block mb-6">
-            <motion.div 
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 20, ease: "linear" }}
-              className="absolute -inset-4 border-4 from-red-600 to-rose-500 rounded-3xl"
-            />
-            <div className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-br 3xl flex items-center justify-center text-white text-4xl md:text-5xl font-black italic shadow-2xl overflow-hidden">
-              <img 
-                src="/src/assets/logo.png"
-                alt="Student Nagari Logo"
-                className="w-full h-full object-cover p-2"  
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                  e.target.parentElement.innerHTML = 'N';
-                }}
+          <Link to="/" className="inline-block">
+            <div className="relative inline-block mb-6">
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 20, ease: "linear" }}
+                className="absolute -inset-4 border-4 border-slate-200 rounded-3xl"
               />
+              <div className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl flex items-center justify-center text-white text-4xl md:text-5xl font-bold italic shadow-2xl overflow-hidden">
+                <img 
+                  src="/src/assets/logo.png"
+                  alt="Student Nagari Logo"
+                  className="w-full h-full object-cover p-2"  
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling?.remove();
+                    const fallback = document.createElement('div');
+                    fallback.className = 'w-full h-full flex items-center justify-center text-white text-3xl';
+                    fallback.textContent = 'N';
+                    e.target.parentElement.appendChild(fallback);
+                  }}
+                />
+              </div>
             </div>
-          </div>
+          </Link>
           <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 tracking-tighter uppercase mb-2">
             STUDENT <span className="text-red-600">NAGARI</span>
           </h1>
           <p className="text-slate-500 text-lg md:text-xl font-medium">
-            All-in-One Education Platform-Smart Hub
+            All-in-One Education Platform Smart Hub
           </p>
           <div className="flex items-center justify-center gap-4 mt-4 text-sm text-slate-400">
             <span className="flex items-center gap-1">
@@ -898,8 +983,6 @@ const Login = () => {
                     // Set default auth method based on role
                     if (role.id === 'admin') {
                       setAuthMethod('password');
-                    } else if (role.id === 'teacher') {
-                      setAuthMethod('phone');
                     } else {
                       setAuthMethod('phone');
                     }
@@ -907,7 +990,7 @@ const Login = () => {
                 >
                   {/* Badge */}
                   {role.badge && (
-                    <div className={`absolute top-4 right-4 ${role.badge.color} text-white text-xs font-black px-3 py-1 rounded-full`}>
+                    <div className={`absolute top-4 right-4 ${role.badge.color} text-white text-xs font-bold px-3 py-1 rounded-full`}>
                       {role.badge.text}
                     </div>
                   )}
@@ -923,7 +1006,7 @@ const Login = () => {
                     {role.icon}
                   </div>
                   
-                  <h3 className="text-2xl font-black text-slate-900 mb-2">{role.title}</h3>
+                  <h3 className="text-2xl font-bold text-slate-900 mb-2">{role.title}</h3>
                   <p className="text-slate-500 text-sm mb-1">{role.tagline}</p>
                   <p className="text-slate-600 text-sm mb-6 flex-1">{role.description}</p>
                   
@@ -967,7 +1050,7 @@ const Login = () => {
                   {/* Quick Info */}
                   <div className="text-xs text-slate-500 mb-4">{role.quickInfo}</div>
                   
-                  <button className={`${role.gradient} text-white px-8 py-4 rounded-full font-black text-xs uppercase tracking-widest hover:shadow-xl transition-all duration-300 w-full`}>
+                  <button className={`${role.gradient} text-white px-8 py-3 rounded-full font-bold text-xs uppercase tracking-wider hover:shadow-lg transition-all duration-300 w-full`}>
                     Enter Portal
                   </button>
                 </motion.div>
@@ -980,7 +1063,7 @@ const Login = () => {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className={`bg-white rounded-[3rem] shadow-2xl w-full max-w-4xl mx-auto relative border border-slate-100 ${
+              className={`bg-white rounded-[2rem] shadow-2xl w-full max-w-4xl mx-auto relative border border-slate-100 ${
                 (loginMode === "register" || loginMode === "complete-profile") && selectedRole === "student" 
                   ? "max-w-5xl" 
                   : "max-w-md"
@@ -992,7 +1075,7 @@ const Login = () => {
                   setStep("selection");
                   resetForm();
                 }}
-                className="absolute top-6 left-6 text-slate-400 hover:text-red-600 flex items-center gap-2 text-xs font-black uppercase tracking-widest group"
+                className="absolute top-6 left-6 text-slate-400 hover:text-red-600 flex items-center gap-2 text-xs font-bold uppercase tracking-wider group"
                 whileHover={{ x: -4 }}
               >
                 <FiArrowLeft className="group-hover:-translate-x-1 transition-transform" /> 
@@ -1006,13 +1089,13 @@ const Login = () => {
                     className: "text-slate-700"
                   })}
                 </div>
-                <span className="text-slate-400 text-xs font-black uppercase tracking-[0.3em]">
+                <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">
                   {selectedRole.toUpperCase()} {loginMode === "register" ? "REGISTRATION" : loginMode === "complete-profile" ? "COMPLETE PROFILE" : "LOGIN"}
                 </span>
               </div>
 
-              <div className={`px-8 pb-8 ${(loginMode === "register" || loginMode === "complete-profile") && selectedRole === "student" ? "" : ""}`}>
-                <h2 className="text-2xl md:text-3xl font-black text-slate-900 text-center mb-2">
+              <div className={`px-6 md:px-8 pb-8 ${(loginMode === "register" || loginMode === "complete-profile") && selectedRole === "student" ? "" : ""}`}>
+                <h2 className="text-2xl md:text-3xl font-bold text-slate-900 text-center mb-2">
                   {loginMode === "register" ? 'Create Student Account' : 
                    loginMode === "complete-profile" ? 'Complete Your Profile' : 
                    'Welcome Back'}
@@ -1053,7 +1136,7 @@ const Login = () => {
                           type="email" 
                           required
                           placeholder="you@example.com"
-                          className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-red-600/30 font-medium"
+                          className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-red-600/30 font-medium"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                         />
@@ -1065,14 +1148,14 @@ const Login = () => {
                       <button
                         type="button"
                         onClick={() => setForgotPassword(false)}
-                        className="flex-1 px-4 py-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors"
+                        className="flex-1 px-4 py-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors text-sm"
                       >
                         Cancel
                       </button>
                       <button
                         onClick={handleForgotPassword}
                         disabled={loading}
-                        className="flex-1 px-4 py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl font-bold hover:shadow-lg transition-all disabled:opacity-50"
+                        className="flex-1 px-4 py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl font-bold hover:shadow-lg transition-all disabled:opacity-50 text-sm"
                       >
                         {loading ? "Sending..." : "Reset Password"}
                       </button>
@@ -1108,7 +1191,7 @@ const Login = () => {
                               inputMode="numeric"
                               pattern="[0-9]*"
                               maxLength={1}
-                              className="w-12 h-12 md:w-14 md:h-14 text-2xl font-black text-center bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                              className="w-12 h-12 md:w-14 md:h-14 text-2xl font-bold text-center bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                               value={digit}
                               onChange={(e) => handleOtpChange(index, e.target.value)}
                               onKeyDown={(e) => {
@@ -1141,7 +1224,7 @@ const Login = () => {
                         <button 
                           type="submit"
                           disabled={loading || otp.join('').length !== 6}
-                          className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-4 rounded-xl font-bold text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                          className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-3 rounded-xl font-bold text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                           {loading ? (
                             <>
@@ -1179,7 +1262,7 @@ const Login = () => {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-6"
                   >
-                    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100 rounded-2xl p-6 mb-6">
+                    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100 rounded-2xl p-4 md:p-6 mb-6">
                       <div className="flex items-start gap-3">
                         <div className="p-3 rounded-xl bg-white">
                           <FiUserPlus className="text-blue-600 text-xl" />
@@ -1201,7 +1284,7 @@ const Login = () => {
                     </div>
 
                     <form onSubmit={loginMode === "complete-profile" ? completeSocialProfile : handleStudentRegistration}>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         {/* Personal Information */}
                         <div className="space-y-4">
                           <h4 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
@@ -1215,7 +1298,7 @@ const Login = () => {
                                 type="text"
                                 required
                                 placeholder="John Doe"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                 value={fullName}
                                 onChange={(e) => setFullName(e.target.value)}
                               />
@@ -1223,7 +1306,7 @@ const Login = () => {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <label className="text-sm font-medium text-slate-700">Email <span className="text-red-500">*</span></label>
                               <div className="relative">
@@ -1232,7 +1315,7 @@ const Login = () => {
                                   required
                                   disabled={loginMode === "complete-profile"}
                                   placeholder="student@example.com"
-                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium ${loginMode === "complete-profile" ? 'opacity-70' : ''}`}
+                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium ${loginMode === "complete-profile" ? 'opacity-70' : ''}`}
                                   value={loginMode === "complete-profile" ? socialUserData?.email || studentEmail : studentEmail}
                                   onChange={(e) => setStudentEmail(e.target.value)}
                                 />
@@ -1251,7 +1334,7 @@ const Login = () => {
                                   required={loginMode === "register"}
                                   maxLength={10}
                                   placeholder="9876543210"
-                                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-16 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                  className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-16 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={studentPhone}
                                   onChange={(e) => {
                                     const value = e.target.value.replace(/\D/g, '').slice(0, 10);
@@ -1263,13 +1346,13 @@ const Login = () => {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <label className="text-sm font-medium text-slate-700">Date of Birth</label>
                               <div className="relative">
                                 <input 
                                   type="date"
-                                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                  className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={dateOfBirth}
                                   onChange={(e) => setDateOfBirth(e.target.value)}
                                 />
@@ -1280,7 +1363,7 @@ const Login = () => {
                             <div className="space-y-2">
                               <label className="text-sm font-medium text-slate-700">Gender</label>
                               <select 
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                className="w-full bg-slate-50 border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                 value={gender}
                                 onChange={(e) => setGender(e.target.value)}
                               >
@@ -1299,7 +1382,7 @@ const Login = () => {
                               <textarea 
                                 placeholder="Enter your complete address"
                                 rows="2"
-                                className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium resize-none"
+                                className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium resize-none"
                                 value={address}
                                 onChange={(e) => setAddress(e.target.value)}
                               />
@@ -1311,13 +1394,13 @@ const Login = () => {
                         {/* Educational Information */}
                         <div className="space-y-4">
                           <h4 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
-                            <FiGraduationCap className="text-blue-500" /> Educational Information
+                            <FiBook className="text-blue-500" /> Educational Information
                           </h4>
 
                           <div className="space-y-2">
                             <label className="text-sm font-medium text-slate-700">Education Level</label>
                             <select 
-                              className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                              className="w-full bg-slate-50 border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                               value={educationLevel}
                               onChange={(e) => setEducationLevel(e.target.value)}
                             >
@@ -1331,12 +1414,12 @@ const Login = () => {
                           <div className="space-y-2">
                             <label className="text-sm font-medium text-slate-700">Areas of Interest</label>
                             <div className="flex flex-wrap gap-2">
-                              {interestCategories.map((interest) => (
+                              {interestCategories.slice(0, 8).map((interest) => (
                                 <button
                                   type="button"
                                   key={interest}
                                   onClick={() => toggleInterest(interest)}
-                                  className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${interests.includes(interest)
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${interests.includes(interest)
                                     ? 'bg-blue-500 text-white'
                                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                   }`}
@@ -1361,7 +1444,7 @@ const Login = () => {
                                     type={showPassword ? "text" : "password"}
                                     required
                                     placeholder="Minimum 6 characters"
-                                    className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 pr-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                    className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 pr-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                   />
@@ -1420,21 +1503,21 @@ const Login = () => {
                         </div>
                       </div>
 
-                      <div className="flex gap-4 pt-8">
+                      <div className="flex gap-4 pt-6">
                         <button
                           type="button"
                           onClick={() => {
                             setLoginMode("login");
                             resetForm();
                           }}
-                          className="flex-1 px-4 py-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors"
+                          className="flex-1 px-4 py-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors text-sm"
                         >
                           Back to Login
                         </button>
                         <button
                           type="submit"
                           disabled={loading || (loginMode === "register" && !termsAccepted)}
-                          className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-bold hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                          className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-bold hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
                         >
                           {loading ? (
                             <>
@@ -1509,7 +1592,7 @@ const Login = () => {
                             key={method.id}
                             type="button"
                             onClick={() => setAuthMethod(method.id)}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${authMethod === method.id 
+                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${authMethod === method.id 
                               ? 'bg-slate-900 text-white' 
                               : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                           >
@@ -1573,7 +1656,7 @@ const Login = () => {
                                   required
                                   maxLength={10}
                                   placeholder="9876543210"
-                                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 pl-20 rounded-xl outline-none focus:border-blue-500/30 font-medium"
+                                  className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-20 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={phone}
                                   onChange={(e) => {
                                     const value = e.target.value.replace(/\D/g, '').slice(0, 10);
@@ -1600,7 +1683,7 @@ const Login = () => {
                                     selectedRole === 'teacher' ? "faculty@studentnagari.edu" :
                                     "student@example.com"
                                   }
-                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 rounded-xl outline-none font-medium ${
+                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none font-medium ${
                                     selectedRole === 'admin' ? 'focus:border-slate-900/30' :
                                     selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
                                     'focus:border-blue-500/30'
@@ -1621,7 +1704,7 @@ const Login = () => {
                                   type={showPassword ? "text" : "password"}
                                   required
                                   placeholder="Enter your password"
-                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-4 pl-12 pr-12 rounded-xl outline-none font-medium ${
+                                  className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 pr-12 rounded-xl outline-none font-medium ${
                                     selectedRole === 'admin' ? 'focus:border-slate-900/30' :
                                     selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
                                     'focus:border-blue-500/30'
@@ -1669,7 +1752,7 @@ const Login = () => {
                         <button 
                           type="submit"
                           disabled={loading}
-                          className={`w-full py-4 rounded-xl font-bold text-sm hover:shadow-lg transition-all mt-6 ${
+                          className={`w-full py-3 rounded-xl font-bold text-sm hover:shadow-lg transition-all mt-6 ${
                             authMethod === 'phone' ? 'bg-gradient-to-r from-blue-500 to-blue-600' :
                             selectedRole === 'teacher' ? 'bg-gradient-to-r from-emerald-500 to-green-500' :
                             selectedRole === 'admin' ? 'bg-gradient-to-r from-slate-800 to-slate-900' :
@@ -1753,16 +1836,16 @@ const Login = () => {
           transition={{ delay: 0.5 }}
           className="mt-12 text-center text-slate-500 text-sm"
         >
-          <div className="flex flex-wrap items-center justify-center gap-6 mb-4">
-            <span>Privacy Policy</span>
-            <span className="text-slate-300">•</span>
-            <span>Terms of Service</span>
-            <span className="text-slate-300">•</span>
-            <span>Support Center</span>
-            <span className="text-slate-300">•</span>
-            <span>System Status</span>
+          <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6 mb-4">
+            <a href="/privacy" className="hover:text-slate-700 transition-colors">Privacy Policy</a>
+            <span className="text-slate-300 hidden md:inline">•</span>
+            <a href="/terms" className="hover:text-slate-700 transition-colors">Terms of Service</a>
+            <span className="text-slate-300 hidden md:inline">•</span>
+            <a href="/support" className="hover:text-slate-700 transition-colors">Support Center</a>
+            <span className="text-slate-300 hidden md:inline">•</span>
+            <a href="/status" className="hover:text-slate-700 transition-colors">System Status</a>
           </div>
-          <p>© 2024 Student Nagari. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Student Nagari. All rights reserved.</p>
           <p className="text-xs text-slate-400 mt-2">v2.3.0 • Enhanced Registration System</p>
         </motion.div>
       </div>
