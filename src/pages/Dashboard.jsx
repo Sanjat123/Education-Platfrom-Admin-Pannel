@@ -49,10 +49,28 @@ const Dashboard = () => {
   const [topCourses, setTopCourses] = useState([]);
 
   useEffect(() => {
-    const unsubStudents = onSnapshot(collection(db, "students"), (snap) => {
-      setStats(prev => ({ ...prev, students: snap.size }));
+  // ... existing code ...
+  
+  // Fetch students with status breakdown
+  const unsubStudents = onSnapshot(
+    query(collection(db, "users"), where("role", "==", "student")), 
+    (snap) => {
+      const studentList = snap.docs.map(doc => doc.data());
+      const activeStudents = studentList.filter(s => s.status === "active").length;
+      const inactiveStudents = studentList.filter(s => s.status === "inactive").length;
+      const pendingStudents = studentList.filter(s => s.status === "pending").length;
+      
+      setStats(prev => ({ 
+        ...prev, 
+        students: studentList.length,
+        activeStudents,
+        inactiveStudents,
+        pendingStudents
+      }));
       updateLastUpdated();
-    });
+    }
+  );
+
 
     const unsubTeachers = onSnapshot(
       query(collection(db, "users"), where("role", "==", "teacher")), 

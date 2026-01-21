@@ -1,3 +1,6 @@
+
+import { Buffer } from 'buffer';
+window.Buffer = Buffer;
 import React from "react";
 import ReactDOM from "react-dom/client"; // Ensure ye line aisi hi ho
 import { BrowserRouter } from "react-router-dom";

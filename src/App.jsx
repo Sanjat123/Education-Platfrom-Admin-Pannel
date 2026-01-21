@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 // Layouts & Components
 import GlobalNavbar from "./components/GlobalNavbar"; 
-import Footer from "./components/Footer"; // Naya Footer Component
+import Footer from "./components/Footer";
 import AdminLayout from "./layouts/AdminLayout";
 import StudentLayout from "./layouts/StudentLayout";
 import FacultyLayout from "./layouts/FacultyLayout";
@@ -22,6 +22,8 @@ import Courses from "./pages/Courses";
 import ManageLectures from "./pages/ManageLectures"; 
 import Teachers from "./pages/Teachers";
 import Payments from "./pages/Payments";
+import Analytics from "./pages/Analytics";
+import Settings from "./pages/Settings"; // ✅ Added Settings page import
 
 // Student & Faculty Pages
 import StudentDashboard from "./pages/StudentDashboard";
@@ -31,7 +33,7 @@ import FacultyDashboard from "./pages/FacultyDashboard";
 import LiveClasses from "./pages/LiveClasses";
 
 /**
- * AdminLockdownGuard: Yeh ensure karta hai ki Admin sirf Admin area mein rahe
+ * AdminLockdownGuard: Sirf Admin ke liye lockdown
  */
 const AdminLockdownGuard = ({ children }) => {
   const { userProfile, loading } = useAuth();
@@ -46,7 +48,7 @@ const AdminLockdownGuard = ({ children }) => {
     );
   }
   
-  // Agar user Admin hai aur wo Admin area ke bahar jane ki koshish kar raha hai
+  // SIRF Admin ke liye lockdown
   if (userProfile?.role?.toLowerCase() === "admin") {
     const isAdminPath = location.pathname.startsWith("/admin");
     
@@ -97,6 +99,7 @@ const ProtectedRoute = ({ children, roleRequired }) => {
 
 /**
  * PublicRoute: Agar user already login hai, toh unhe appropriate dashboard par redirect karega
+ * SIRF Admin ke liye redirect, student/teacher ke liye nahi
  */
 const PublicRoute = ({ children }) => {
   const { user, userProfile, loading } = useAuth();
@@ -112,22 +115,16 @@ const PublicRoute = ({ children }) => {
   }
 
   if (user && userProfile) {
-    // Agar user already login hai, toh unhe unke role ke according dashboard par redirect karo
     const role = userProfile.role?.toLowerCase();
     
-    // Special check: Agar admin login hai aur public page par aane ki koshish kar raha hai
+    // SIRF Admin ke liye redirect - Student/Teacher ko public pages par jaane dijiye
     if (role === "admin") {
       return <Navigate to="/admin" replace />;
     }
     
-    // Agar koi aur logged in user hai
-    const dashboardPaths = {
-      admin: "/admin",
-      teacher: "/faculty",
-      student: "/student"
-    };
-    
-    return <Navigate to={dashboardPaths[role] || "/login"} replace />;
+    // Student ya Teacher hai toh public page access de do
+    // Unhe login hone ke baad bhi marketplace browse karne dijiye
+    return children;
   }
 
   return children;
@@ -138,7 +135,7 @@ function App() {
   const navigate = useNavigate();
   const { userProfile } = useAuth();
 
-  // Global Navigation Guard: Admin ko public pages se rokne ke liye
+  // Global Navigation Guard: SIRF Admin ko public pages se rokne ke liye
   useEffect(() => {
     if (userProfile?.role?.toLowerCase() === "admin") {
       const currentPath = location.pathname;
@@ -150,6 +147,8 @@ function App() {
         "/admin/courses",
         "/admin/courses/manage/",
         "/admin/payments",
+        "/admin/analytics",
+        "/admin/settings", // ✅ Added settings path
         "/admin/live"
       ];
       
@@ -176,15 +175,19 @@ function App() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      {/* Global Navbar: Sirf non-dashboard aur non-player pages par dikhega */}
+      {/* Global Navbar: 
+          - Player page par nahi
+          - Dashboard pages par nahi
+          - Student/Teacher ke liye baki sab jagah dikhega
+      */}
       {shouldShowNavbarFooter && <GlobalNavbar />} 
 
       <main className="flex-1">
-        {/* Global Admin Lockdown Guard - Pure app ke liye */}
+        {/* Global Admin Lockdown Guard - Sirf Admin ke liye */}
         <AdminLockdownGuard>
           <Routes>
-            {/* --- PUBLIC MARKETPLACE ROUTES (No Login Required) --- */}
-            {/* Public routes par bhi check karein ki agar user login hai toh redirect ho jaye */}
+            {/* --- PUBLIC MARKETPLACE ROUTES --- */}
+            {/* Student/Teacher login hone ke baad bhi access kar sakte hain */}
             <Route path="/" element={
               <PublicRoute>
                 <Home />
@@ -209,7 +212,7 @@ function App() {
               </PublicRoute>
             } />
 
-            {/* --- ADMIN PANEL (Restricted) --- */}
+            {/* --- ADMIN PANEL (Restricted & Locked) --- */}
             <Route 
               path="/admin" 
               element={
@@ -225,10 +228,12 @@ function App() {
               <Route path="courses" element={<Courses />} />
               <Route path="courses/manage/:courseId" element={<ManageLectures />} />
               <Route path="payments" element={<Payments />} />
+              <Route path="analytics" element={<Analytics />} />
+              <Route path="settings" element={<Settings />} /> {/* ✅ Added Settings route */}
               <Route path="live" element={<LiveClasses />} />
             </Route>
 
-            {/* --- FACULTY HUB --- */}
+            {/* --- FACULTY HUB (No Lockdown) --- */}
             <Route 
               path="/faculty" 
               element={
@@ -243,7 +248,7 @@ function App() {
               <Route path="students" element={<Students />} />
             </Route>
 
-            {/* --- STUDENT PORTAL --- */}
+            {/* --- STUDENT PORTAL (No Lockdown) --- */}
             <Route 
               path="/student" 
               element={
@@ -261,7 +266,7 @@ function App() {
               <Route path="live" element={<LiveClasses />} />
             </Route>
 
-            {/* Catch all route - Admin ko bhi admin area mein hi redirect karega */}
+            {/* Catch all route - Admin ko admin area mein hi redirect karega */}
             <Route path="*" element={
               userProfile?.role?.toLowerCase() === "admin" ? 
                 <Navigate to="/admin" replace /> : 
@@ -271,7 +276,9 @@ function App() {
         </AdminLockdownGuard>
       </main>
 
-      {/* Footer: Sirf non-dashboard aur non-player pages par dikhega */}
+      {/* Footer: 
+          
+      */}
       {shouldShowNavbarFooter && <Footer />}
     </div>
   );

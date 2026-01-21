@@ -1,23 +1,24 @@
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+module.exports = {
   theme: {
     extend: {
-      colors: {
-        cyberbg: "#050509", // Deep dark background
-        cybercard: "rgba(18, 18, 26, 0.7)", // Glass effect
-        neonblue: "#00f6ff", // Bright neon
-        neonpurple: "#a855f7", // Vibrant purple
-        neonpink: "#ec4899", // Pop of pink
+      screens: {
+        'xs': '475px',
       },
-      boxShadow: {
-        'neon': "0 0 20px rgba(0,246,255,0.5)", // Blue glow
-        'neonStrong': "0 0 35px rgba(168, 85, 247, 0.7)", // Purple glow
+      animation: {
+        'status-pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'fade-in-up': 'fadeInUp 0.5s ease-out',
+        'slide-in': 'slideIn 0.3s ease-out',
+      },
+      keyframes: {
+        fadeInUp: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideIn: {
+          '0%': { opacity: '0', transform: 'translateX(-10px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        }
       }
     }
-  },
-  plugins: [],
-};
+  }
+}
