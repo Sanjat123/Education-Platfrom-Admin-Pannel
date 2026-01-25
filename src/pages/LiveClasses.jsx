@@ -4,122 +4,35 @@ import {
   FiVideo, FiPlus, FiX, FiCalendar, FiClock, FiTrash2, 
   FiPlayCircle, FiUsers, FiUser, FiBookOpen, FiMessageSquare,
   FiMic, FiMicOff, FiVideoOff, FiVideo as FiVideoIcon,
-  FiShare2, FiCopy, FiBell, FiSend, FiSettings, FiAlertCircle,
-  FiChevronDown, FiChevronUp, FiGrid, FiList, FiCheck,
-  FiEye, FiEyeOff, FiLock, FiUnlock, FiFileText, FiDownload
+  FiShare2, FiCopy, FiSend, FiGrid, FiList, FiUsers as FiUsersIcon,
+  FiMaximize2, FiMinimize2, FiLock, FiUnlock, FiSettings,
+  FiChevronDown, FiChevronUp, FiEye, FiEyeOff, FiCheck,
+  FiMoreVertical, FiEdit, FiDownload, FiShare, FiVolume2, FiVolumeX
 } from "react-icons/fi";
-import { db, auth } from "../firebase";
+import { FaRegHandPaper, FaChalkboardTeacher, FaNetworkWired } from "react-icons/fa";
+import { MdScreenShare, MdGroups, MdAdminPanelSettings, MdVideocam, MdVideocamOff } from "react-icons/md";
+import { RiSignalWifiLine, RiSignalWifiOffLine } from "react-icons/ri";
+
+import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { 
   collection, onSnapshot, addDoc, deleteDoc, doc, query, 
   orderBy, where, updateDoc, getDocs, serverTimestamp,
-  arrayUnion, arrayRemove
+  arrayUnion, arrayRemove, getDoc
 } from "firebase/firestore";
 import toast from "react-hot-toast";
 
-// Direct WebRTC implementation without third-party
-class DirectWebRTC {
-  constructor() {
-    this.peerConnections = {};
-    this.localStream = null;
-    this.dataChannel = null;
-    this.iceServers = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ];
-  }
-
-  async initializeLocalStream() {
-    try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      return this.localStream;
-    } catch (error) {
-      console.error("Error accessing media devices:", error);
-      throw error;
-    }
-  }
-
-  async createPeerConnection(remoteId, onStreamReceived) {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    
-    // Add local stream tracks
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(track => {
-        pc.addTrack(track, this.localStream);
-      });
-    }
-
-    // Handle remote stream
-    pc.ontrack = (event) => {
-      if (onStreamReceived) {
-        onStreamReceived(event.streams[0], remoteId);
-      }
-    };
-
-    // Data channel for chat
-    if (!this.dataChannel) {
-      this.dataChannel = pc.createDataChannel('chat');
-    }
-
-    this.peerConnections[remoteId] = pc;
-    return pc;
-  }
-
-  async createOffer(remoteId) {
-    const pc = this.peerConnections[remoteId];
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    return offer;
-  }
-
-  async handleAnswer(remoteId, answer) {
-    const pc = this.peerConnections[remoteId];
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  }
-
-  async handleOffer(remoteId, offer, onStreamReceived) {
-    const pc = await this.createPeerConnection(remoteId, onStreamReceived);
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    return answer;
-  }
-
-  stop() {
-    // Stop all tracks in local stream
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(track => track.stop());
-    }
-
-    // Close all peer connections
-    Object.values(this.peerConnections).forEach(pc => pc.close());
-    
-    this.peerConnections = {};
-    this.localStream = null;
-    this.dataChannel = null;
-  }
-}
+// ZegoCloud SDK
+const ZegoUIKitPrebuilt = window.ZegoUIKitPrebuilt;
 
 const LiveClasses = () => {
   const { userProfile } = useAuth();
   const [classes, setClasses] = useState([]);
   const [allTeachers, setAllTeachers] = useState([]);
-  const [enrolledStudents, setEnrolledStudents] = useState([]);
+  const [allStudents, setAllStudents] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [activeRoom, setActiveRoom] = useState(null);
-  const [isAdminMeeting, setIsAdminMeeting] = useState(false);
   const [formData, setFormData] = useState({ 
     topic: "", 
     instructor: userProfile?.role === 'admin' ? "" : userProfile?.name, 
@@ -130,35 +43,58 @@ const LiveClasses = () => {
     description: "",
     isPrivate: false,
     password: "",
-    assignedTeacherId: ""
+    assignedTeacherId: "",
+    assignedStudentIds: [],
+    meetingType: "class",
+    maxParticipants: 50,
+    enableChat: true,
+    enableScreenShare: true,
+    enableRecording: false,
+    allowAllParticipantsVideo: true,
+    allowAllParticipantsAudio: true,
+    autoRecord: false
   });
   
   const [courses, setCourses] = useState([]);
-  const [selectedCourse, setSelectedCourse] = useState(null);
+  const [selectedTeachers, setSelectedTeachers] = useState([]);
+  const [selectedStudents, setSelectedStudents] = useState([]);
+  const [showTeacherSelector, setShowTeacherSelector] = useState(false);
+  const [showStudentSelector, setShowStudentSelector] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState("upcoming");
   const [chatMessages, setChatMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [screenSharing, setScreenSharing] = useState(false);
-  const [viewMode, setViewMode] = useState("grid"); // grid or speaker
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [notifications, setNotifications] = useState([]);
-
-  const webRTCRef = useRef(new DirectWebRTC());
-  const localVideoRef = useRef(null);
-  const remoteVideosRef = useRef({});
+  const [videoLayout, setVideoLayout] = useState("grid");
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [showParticipantsList, setShowParticipantsList] = useState(false);
+  const [activeMeetingMenu, setActiveMeetingMenu] = useState(null);
+  const [meetingPassword, setMeetingPassword] = useState("");
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordMeeting, setPasswordMeeting] = useState(null);
+  
+  const videoContainerRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const participantsRef = useRef(null);
+  const zegoInstanceRef = useRef(null);
+
+  // ZegoCloud Credentials
+  const appID = 942355460;
+  const serverSecret = "975421711c18fe32b88ac71689c3e077";
 
   useEffect(() => {
     loadInitialData();
-    setupNotifications();
     
-    // Check for upcoming live classes
-    const interval = setInterval(checkUpcomingClasses, 60000); // Every minute
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
     
     return () => {
-      webRTCRef.current.stop();
-      clearInterval(interval);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      leaveMeeting();
     };
   }, [userProfile]);
 
@@ -169,855 +105,1116 @@ const LiveClasses = () => {
         const teachersSnap = await getDocs(
           query(collection(db, "users"), where("role", "==", "teacher"))
         );
-        setAllTeachers(teachersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const teachersData = teachersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllTeachers(teachersData);
+        
+        const studentsSnap = await getDocs(
+          query(collection(db, "users"), where("role", "==", "student"))
+        );
+        setAllStudents(studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       }
 
-      // Load courses
       const coursesSnap = await getDocs(collection(db, "courses"));
-      const coursesList = coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCourses(coursesList);
+      setCourses(coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
-      // Load live classes
-      const q = query(
-        collection(db, "liveClasses"), 
-        orderBy("scheduledAt", "asc"),
-        where("scheduledAt", ">", new Date())
-      );
+      // Load live classes/meetings
+      const q = query(collection(db, "liveMeetings"), orderBy("scheduledAt", "desc"));
+      
       const unsub = onSnapshot(q, (snap) => {
-        const liveClasses = snap.docs.map(doc => {
+        const meetings = snap.docs.map(doc => {
           const data = doc.data();
           return { 
             id: doc.id, 
             ...data,
             scheduledAt: data.scheduledAt?.toDate(),
-            createdAt: data.createdAt?.toDate()
+            createdAt: data.createdAt?.toDate(),
+            startedAt: data.startedAt?.toDate(),
+            endedAt: data.endedAt?.toDate()
           };
         });
         
-        // Filter based on role
-        if (userProfile?.role === 'teacher') {
-          const teacherClasses = liveClasses.filter(cls => 
-            cls.instructorId === userProfile.uid || 
-            cls.assignedTeacherId === userProfile.uid
-          );
-          setClasses(teacherClasses);
-        } else if (userProfile?.role === 'admin') {
-          setClasses(liveClasses);
-        } else {
-          // Student: show classes for enrolled courses
-          const studentClasses = liveClasses.filter(cls => 
-            cls.participants?.includes(userProfile?.uid) || 
-            !cls.isPrivate
-          );
-          setClasses(studentClasses);
-        }
+        // Filter meetings based on user role
+        const filteredMeetings = meetings.filter(meeting => {
+          if (userProfile?.role === 'admin') return true;
+          
+          if (meeting.meetingType === 'teacher') {
+            return meeting.assignedTeacherIds?.includes(userProfile?.uid) || 
+                   userProfile?.uid === meeting.instructorId;
+          }
+          
+          if (meeting.meetingType === 'student') {
+            return meeting.assignedStudentIds?.includes(userProfile?.uid);
+          }
+          
+          if (meeting.meetingType === 'admin') {
+            return userProfile?.role === 'admin';
+          }
+          
+          // For class meetings
+          if (meeting.isPrivate) {
+            return meeting.participants?.includes(userProfile?.uid) || 
+                   userProfile?.uid === meeting.instructorId;
+          }
+          
+          return true;
+        });
+        
+        setClasses(filteredMeetings);
       });
 
       return () => unsub();
     } catch (error) {
       console.error("Error loading data:", error);
-      toast.error("Failed to load data");
+      toast.error("Failed to load meetings");
     }
   };
 
-  const setupNotifications = () => {
-    if (!userProfile?.uid) return;
-
-    const notificationsRef = collection(db, "notifications");
-    const q = query(
-      notificationsRef,
-      where("userId", "==", userProfile.uid),
-      where("read", "==", false),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const newNotifications = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate()
-      }));
-      setNotifications(newNotifications);
-      setNotificationCount(newNotifications.length);
-    });
-
-    return () => unsub();
-  };
-
-  const checkUpcomingClasses = () => {
-    const now = new Date();
-    const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
-    
-    classes.forEach(cls => {
-      if (cls.scheduledAt && cls.scheduledAt > now && cls.scheduledAt <= nextHour) {
-        sendNotification({
-          title: "Live Class Starting Soon",
-          message: `"${cls.topic}" starts in less than 1 hour`,
-          type: "reminder",
-          userId: userProfile?.uid,
-          classId: cls.id
-        });
-      }
-    });
-  };
-
-  const sendNotification = async (notification) => {
-    try {
-      await addDoc(collection(db, "notifications"), {
-        ...notification,
-        read: false,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      console.error("Error sending notification:", error);
+  const startZegoCloudMeeting = async (meeting, isHost = false) => {
+    if (!ZegoUIKitPrebuilt) {
+      toast.error("Video SDK loading... Please refresh");
+      return;
     }
-  };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
     try {
-      const scheduledAt = new Date(`${formData.date}T${formData.time}`);
+      const roomID = meeting.id;
+      const userName = userProfile?.name || "Guest";
+      const userID = userProfile?.uid || `guest_${Date.now()}`;
       
-      // Determine participants
-      let participants = [];
-      if (formData.courseId) {
-        // Get enrolled students for the course
-        const enrollmentSnap = await getDocs(
-          query(collection(db, "enrollments"), where("courseId", "==", formData.courseId))
-        );
-        participants = enrollmentSnap.docs.map(doc => doc.data().studentId);
+      // Generate Kit Token
+      const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
+        appID, 
+        serverSecret, 
+        roomID, 
+        userID, 
+        userName
+      );
+
+      // Create ZegoCloud instance
+      const zp = ZegoUIKitPrebuilt.create(kitToken);
+      zegoInstanceRef.current = zp;
+
+      // User role based on host status
+      let userRole = ZegoUIKitPrebuilt.Audience;
+      if (isHost || userProfile?.uid === meeting.instructorId || userProfile?.role === 'admin') {
+        userRole = ZegoUIKitPrebuilt.Host;
       }
 
-      const liveClassData = {
-        topic: formData.topic,
-        description: formData.description,
-        instructor: formData.instructor,
-        instructorId: userProfile?.uid,
-        courseId: formData.courseId,
-        scheduledAt: scheduledAt,
-        duration: parseInt(formData.duration),
-        status: "scheduled",
-        isPrivate: formData.isPrivate,
-        password: formData.isPrivate ? formData.password : "",
-        maxParticipants: 100,
-        createdAt: serverTimestamp(),
-        participants: participants,
-        assignedTeacherId: formData.assignedTeacherId || null
+      // Configuration for video call
+      const config = {
+        container: videoContainerRef.current,
+        scenario: {
+          mode: ZegoUIKitPrebuilt.VideoConference, // Group video call
+        },
+        showPreJoinView: false,
+        turnOnMicrophoneWhenJoining: userRole === ZegoUIKitPrebuilt.Host,
+        turnOnCameraWhenJoining: userRole === ZegoUIKitPrebuilt.Host,
+        showMyCameraToggleButton: true,
+        showMyMicrophoneToggleButton: true,
+        showAudioVideoSettingsButton: true,
+        showScreenSharingButton: meeting.enableScreenShare,
+        showTextChat: meeting.enableChat,
+        showUserList: true,
+        showLayoutButton: true,
+        lowerLeftNotification: {
+          showUserJoinAndLeave: true,
+          showTextChat: true
+        },
+        maxUsers: meeting.maxParticipants || 50,
+        layout: "Grid", // Auto grid layout
+        sharedLinks: [
+          {
+            name: 'Join via link',
+            url: `${window.location.origin}/meeting/${roomID}`
+          }
+        ],
+        onJoinRoom: () => {
+          console.log("✅ Successfully joined meeting");
+          setIsLiveActive(true);
+          setActiveRoom(meeting);
+          
+          // Update participant in Firestore
+          updateParticipantPresence(meeting.id, 'join');
+          
+          toast.success(`Joined ${meeting.topic}`);
+        },
+        onLeaveRoom: () => {
+          console.log("Left meeting");
+          leaveMeeting();
+        },
+        onUserJoin: (users) => {
+          console.log("User joined:", users);
+          toast.info(`${users[0]?.userName} joined`);
+        },
+        onUserLeave: (users) => {
+          console.log("User left:", users);
+          toast.info(`${users[0]?.userName} left`);
+        }
       };
 
-      const docRef = await addDoc(collection(db, "liveClasses"), liveClassData);
+      // Join the room
+      zp.joinRoom(config);
 
-      // Send notifications to participants
-      participants.forEach(async (studentId) => {
-        await sendNotification({
-          title: "New Live Class Scheduled",
-          message: `"${formData.topic}" has been scheduled for ${formData.date} at ${formData.time}`,
-          type: "class_scheduled",
-          userId: studentId,
-          classId: docRef.id
+      // If host, update meeting status
+      if (isHost) {
+        await updateDoc(doc(db, "liveMeetings", meeting.id), {
+          status: 'live',
+          startedAt: serverTimestamp(),
+          hostId: userProfile?.uid,
+          currentParticipants: arrayUnion({
+            userId: userProfile?.uid,
+            name: userProfile?.name,
+            role: userProfile?.role,
+            joinedAt: new Date().toISOString()
+          })
         });
-      });
 
-      // Notify assigned teacher
-      if (formData.assignedTeacherId && formData.assignedTeacherId !== userProfile?.uid) {
-        await sendNotification({
-          title: "Live Class Assigned",
-          message: `You've been assigned to host "${formData.topic}"`,
-          type: "teacher_assigned",
-          userId: formData.assignedTeacherId,
-          classId: docRef.id
-        });
+        toast.success(`🎉 ${meeting.meetingType === 'teacher' ? 'Teacher' : meeting.meetingType === 'admin' ? 'Admin' : meeting.meetingType === 'student' ? 'Student' : 'Class'} meeting started!`);
       }
-
-      toast.success("Live class scheduled successfully!");
-      setIsModalOpen(false);
-      setFormData({ 
-        topic: "", 
-        instructor: userProfile?.role === 'admin' ? "" : userProfile?.name, 
-        date: "", 
-        time: "",
-        duration: 60,
-        courseId: "",
-        description: "",
-        isPrivate: false,
-        password: "",
-        assignedTeacherId: ""
-      });
       
     } catch (error) {
-      console.error("Error scheduling class:", error);
-      toast.error("Failed to schedule live class");
+      console.error("❌ Error starting meeting:", error);
+      toast.error("Failed to start video conference");
     }
   };
 
-  const startAdminMeeting = async () => {
+  const updateParticipantPresence = async (meetingId, action) => {
     try {
-      setIsAdminMeeting(true);
-      setIsLiveActive(true);
+      const meetingRef = doc(db, "liveMeetings", meetingId);
       
-      // Create meeting room
-      const meetingId = `admin_meeting_${Date.now()}`;
-      setActiveRoom({
-        id: meetingId,
-        type: 'admin_meeting',
-        topic: "Admin Meeting",
-        participants: [],
-        isPrivate: false
-      });
-
-      // Initialize WebRTC
-      await webRTCRef.current.initializeLocalStream();
-      
-      // Display local video
-      if (localVideoRef.current && webRTCRef.current.localStream) {
-        localVideoRef.current.srcObject = webRTCRef.current.localStream;
-      }
-
-      // Notify all teachers
-      allTeachers.forEach(async (teacher) => {
-        await sendNotification({
-          title: "Admin Meeting Started",
-          message: "Join the admin meeting now",
-          type: "admin_meeting",
-          userId: teacher.id,
-          meetingId: meetingId
+      if (action === 'join') {
+        await updateDoc(meetingRef, {
+          currentParticipants: arrayUnion({
+            userId: userProfile?.uid,
+            name: userProfile?.name,
+            joinedAt: new Date().toISOString(),
+            role: userProfile?.role
+          })
         });
-      });
-
-      toast.success("Admin meeting started. Teachers have been notified.");
-      
-    } catch (error) {
-      console.error("Error starting admin meeting:", error);
-      toast.error("Failed to start admin meeting");
-    }
-  };
-
-  const joinLiveClass = async (liveClass) => {
-    try {
-      setIsLiveActive(true);
-      setActiveRoom(liveClass);
-
-      // Initialize WebRTC
-      await webRTCRef.current.initializeLocalStream();
-      
-      // Display local video
-      if (localVideoRef.current && webRTCRef.current.localStream) {
-        localVideoRef.current.srcObject = webRTCRef.current.localStream;
-      }
-
-      // Update participant count
-      await updateDoc(doc(db, "liveClasses", liveClass.id), {
-        currentParticipants: arrayUnion(userProfile?.uid),
-        lastActivity: serverTimestamp()
-      });
-
-      // Add chat message
-      await addDoc(collection(db, "liveChats"), {
-        classId: liveClass.id,
-        userId: userProfile?.uid,
-        userName: userProfile?.name,
-        message: `${userProfile?.name} joined the class`,
-        type: "system",
-        timestamp: serverTimestamp()
-      });
-
-      toast.success("Joined live class successfully!");
-      
-    } catch (error) {
-      console.error("Error joining live class:", error);
-      toast.error("Failed to join live class");
-    }
-  };
-
-  const toggleAudio = () => {
-    if (webRTCRef.current.localStream) {
-      const audioTrack = webRTCRef.current.localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioMuted(!audioTrack.enabled);
-      }
-    }
-  };
-
-  const toggleVideo = () => {
-    if (webRTCRef.current.localStream) {
-      const videoTrack = webRTCRef.current.localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-      }
-    }
-  };
-
-  const toggleScreenShare = async () => {
-    try {
-      if (!screenSharing) {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
+      } else if (action === 'leave') {
+        await updateDoc(meetingRef, {
+          currentParticipants: arrayRemove(userProfile?.uid)
         });
         
-        // Replace video track
-        const videoTrack = screenStream.getVideoTracks()[0];
-        const sender = webRTCRef.current.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) {
-          sender.replaceTrack(videoTrack);
+        // Check if meeting should end (no participants left)
+        const meetingDoc = await getDoc(meetingRef);
+        const participants = meetingDoc.data().currentParticipants || [];
+        
+        if (participants.length === 0 && meetingDoc.data().status === 'live') {
+          await updateDoc(meetingRef, {
+            status: 'completed',
+            endedAt: serverTimestamp()
+          });
         }
-        
-        setScreenSharing(true);
-        
-        // Handle screen sharing stop
-        videoTrack.onended = () => {
-          setScreenSharing(false);
-        };
-      } else {
-        // Switch back to camera
-        const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const cameraTrack = cameraStream.getVideoTracks()[0];
-        const sender = webRTCRef.current.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) {
-          sender.replaceTrack(cameraTrack);
-        }
-        setScreenSharing(false);
       }
     } catch (error) {
-      console.error("Error sharing screen:", error);
-      toast.error("Failed to share screen");
+      console.error("Error updating participant:", error);
     }
   };
 
-  const sendChatMessage = async () => {
-    if (!newMessage.trim() || !activeRoom) return;
+  const handleJoinMeeting = async (meeting) => {
+    // Check if meeting is private and requires password
+    if (meeting.isPrivate && 
+        !meeting.participants?.includes(userProfile?.uid) && 
+        userProfile?.uid !== meeting.instructorId) {
+      
+      setPasswordMeeting(meeting);
+      setShowPasswordModal(true);
+      return;
+    }
 
-    try {
-      await addDoc(collection(db, "liveChats"), {
-        classId: activeRoom.id,
-        userId: userProfile?.uid,
-        userName: userProfile?.name,
-        message: newMessage,
-        type: "chat",
-        timestamp: serverTimestamp()
+    const isHost = userProfile?.uid === meeting.instructorId || 
+                   userProfile?.role === 'admin' || 
+                   meeting.meetingType === 'admin';
+    
+    await startZegoCloudMeeting(meeting, isHost);
+  };
+
+  const verifyPasswordAndJoin = async () => {
+    if (!passwordMeeting) return;
+    
+    if (meetingPassword === passwordMeeting.password) {
+      setShowPasswordModal(false);
+      setMeetingPassword("");
+      
+      const isHost = userProfile?.uid === passwordMeeting.instructorId || 
+                     userProfile?.role === 'admin';
+      
+      await startZegoCloudMeeting(passwordMeeting, isHost);
+      setPasswordMeeting(null);
+    } else {
+      toast.error("Incorrect password");
+      setMeetingPassword("");
+    }
+  };
+
+  const startMeeting = async (meeting) => {
+    const isHost = userProfile?.uid === meeting.instructorId || 
+                   userProfile?.role === 'admin';
+    
+    if (meeting.status === 'scheduled') {
+      // Update status to live before starting
+      await updateDoc(doc(db, "liveMeetings", meeting.id), {
+        status: 'live',
+        startedAt: serverTimestamp()
       });
+    }
+    
+    await startZegoCloudMeeting(meeting, isHost);
+  };
 
-      setNewMessage("");
-      
-      // Scroll to bottom of chat
-      if (chatContainerRef.current) {
-        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+  const leaveMeeting = async () => {
+    if (zegoInstanceRef.current) {
+      zegoInstanceRef.current.destroy();
+      zegoInstanceRef.current = null;
+    }
+    
+    if (activeRoom) {
+      await updateParticipantPresence(activeRoom.id, 'leave');
+    }
+    
+    setIsLiveActive(false);
+    setActiveRoom(null);
+    toast.success("Left the meeting");
+  };
+
+  const endMeetingForAll = async () => {
+    if (window.confirm("End meeting for all participants?")) {
+      try {
+        await updateDoc(doc(db, "liveMeetings", activeRoom.id), {
+          status: 'completed',
+          endedAt: serverTimestamp(),
+          endedBy: userProfile?.uid
+        });
+        
+        toast.success("Meeting ended for all");
+        leaveMeeting();
+      } catch (error) {
+        console.error("Error ending meeting:", error);
+        toast.error("Failed to end meeting");
       }
-      
-    } catch (error) {
-      console.error("Error sending chat message:", error);
     }
   };
 
-  const endLiveSession = async () => {
-    try {
-      if (activeRoom) {
-        await updateDoc(doc(db, "liveClasses", activeRoom.id), {
-          status: "completed",
-          endedAt: serverTimestamp()
-        });
+  const deleteMeeting = async (meetingId) => {
+    if (window.confirm("Delete this meeting permanently?")) {
+      try {
+        await deleteDoc(doc(db, "liveMeetings", meetingId));
+        toast.success("Meeting deleted");
+      } catch (error) {
+        console.error("Error deleting meeting:", error);
+        toast.error("Failed to delete");
       }
-
-      // Stop all media
-      webRTCRef.current.stop();
-      
-      setIsLiveActive(false);
-      setActiveRoom(null);
-      setIsAdminMeeting(false);
-      
-      toast.success("Live session ended successfully!");
-      
-    } catch (error) {
-      console.error("Error ending live session:", error);
-      toast.error("Failed to end live session");
     }
   };
 
   const copyInviteLink = () => {
-    const inviteLink = `${window.location.origin}/live/${activeRoom?.id}`;
+    if (!activeRoom) return;
+    
+    const inviteLink = `${window.location.origin}/meeting/${activeRoom.id}`;
     navigator.clipboard.writeText(inviteLink);
-    toast.success("Invite link copied to clipboard!");
+    toast.success("Link copied to clipboard!");
   };
 
-  const markNotificationAsRead = async (notificationId) => {
-    try {
-      await updateDoc(doc(db, "notifications", notificationId), {
-        read: true
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      videoContainerRef.current?.requestFullscreen().catch(err => {
+        console.error("Fullscreen error:", err);
       });
-    } catch (error) {
-      console.error("Error marking notification as read:", error);
+    } else {
+      document.exitFullscreen();
     }
   };
 
-  const renderLiveStudio = () => {
+  const sendChatMessage = () => {
+    if (!newMessage.trim()) return;
+
+    const message = {
+      id: Date.now().toString(),
+      userId: userProfile?.uid,
+      userName: userProfile?.name,
+      message: newMessage,
+      timestamp: new Date().toISOString()
+    };
+
+    setChatMessages(prev => [...prev, message]);
+    setNewMessage("");
+    
+    // Auto scroll to bottom
+    setTimeout(() => {
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
+    }, 100);
+  };
+
+  const renderMeetingStudio = () => {
+    if (!activeRoom) return null;
+
     return (
-      <div className="fixed inset-0 z-[10000] bg-slate-900 flex flex-col">
-        {/* Top Bar */}
-        <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
+      <div className={`fixed inset-0 z-50 bg-gray-900 flex flex-col ${isFullscreen ? '' : 'p-2 md:p-4'}`}>
+        {/* Top Control Bar */}
+        <div className="flex-shrink-0 p-4 bg-gray-900 border-b border-gray-800 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold text-white">
-              {isAdminMeeting ? "Admin Meeting" : activeRoom?.topic}
-            </h2>
-            <div className="flex items-center gap-2 px-3 py-1 bg-slate-800 rounded-full">
-              <FiUsers className="text-slate-400" />
-              <span className="text-sm text-white">
-                {activeRoom?.currentParticipants?.length || 1} online
-              </span>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+              <span className="text-sm font-bold text-white">LIVE</span>
+            </div>
+            
+            <div>
+              <h2 className="text-lg font-bold text-white">
+                {activeRoom.topic}
+              </h2>
+              <p className="text-xs text-gray-400">
+                {activeRoom.meetingType === 'teacher' ? '👨‍🏫 Teacher Meeting' : 
+                 activeRoom.meetingType === 'admin' ? '🛡️ Admin Meeting' : 
+                 activeRoom.meetingType === 'student' ? '👨‍🎓 Student Meeting' : '🎓 Live Class'}
+              </p>
             </div>
           </div>
           
           <div className="flex items-center gap-3">
-            <button 
-              onClick={copyInviteLink}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700"
+            <button
+              onClick={() => setShowParticipantsList(!showParticipantsList)}
+              className="px-4 py-2 bg-gray-800 text-white rounded-lg text-sm hover:bg-gray-700 flex items-center gap-2"
             >
-              <FiCopy />
-              Copy Invite
+              <FiUsers />
+              Participants
             </button>
-            <button 
-              onClick={endLiveSession}
-              className="px-6 py-2 bg-rose-600 text-white rounded-lg font-bold hover:bg-rose-700"
+            
+            <button
+              onClick={copyInviteLink}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-2"
             >
-              End Session
+              <FiShare />
+              Invite
+            </button>
+            
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg"
+            >
+              {isFullscreen ? <FiMinimize2 size={20} /> : <FiMaximize2 size={20} />}
+            </button>
+            
+            {/* Host Controls */}
+            {(userProfile?.uid === activeRoom.instructorId || userProfile?.role === 'admin') && (
+              <button
+                onClick={endMeetingForAll}
+                className="px-4 py-2 bg-red-700 text-white rounded-lg font-bold hover:bg-red-800"
+              >
+                End Meeting
+              </button>
+            )}
+            
+            <button
+              onClick={leaveMeeting}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700"
+            >
+              Leave
             </button>
           </div>
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 flex">
-          {/* Video Grid */}
-          <div className={`flex-1 p-4 ${viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'flex flex-col'}`}>
-            {/* Local Video */}
-            <div className={`relative ${viewMode === 'speaker' ? 'flex-1' : ''}`}>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full h-full object-cover rounded-lg bg-slate-800"
-              />
-              <div className="absolute bottom-4 left-4 bg-slate-900/80 text-white px-3 py-1 rounded-lg text-sm">
-                You ({userProfile?.name})
-                {isAudioMuted && <FiMicOff className="inline ml-2 text-rose-500" />}
-                {isVideoOff && <FiVideoOff className="inline ml-2 text-rose-500" />}
-              </div>
-            </div>
-
-            {/* Remote Videos will be added here dynamically */}
-          </div>
-
-          {/* Chat Sidebar */}
-          <div className="w-80 border-l border-slate-800 flex flex-col">
-            <div className="p-4 border-b border-slate-800">
-              <h3 className="font-bold text-white">Chat</h3>
-            </div>
-            
+        {/* Main Video Area */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Video Container */}
+          <div className="flex-1 bg-black relative">
             <div 
-              ref={chatContainerRef}
-              className="flex-1 overflow-y-auto p-4 space-y-4"
-            >
-              {/* Chat messages will be loaded here */}
-              <div className="text-center text-slate-500 text-sm py-8">
-                Chat messages will appear here
-              </div>
-            </div>
-
-            {/* Chat Input */}
-            <div className="p-4 border-t border-slate-800">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
-                  placeholder="Type your message..."
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-sky-500"
-                />
+              ref={videoContainerRef}
+              className="w-full h-full"
+            />
+            
+            {/* Floating Controls */}
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-4 bg-gray-900/80 backdrop-blur-sm px-6 py-3 rounded-full">
+              <button
+                onClick={() => {
+                  if (zegoInstanceRef.current) {
+                    zegoInstanceRef.current.toggleMicrophone();
+                    setIsMicMuted(!isMicMuted);
+                  }
+                }}
+                className={`p-3 rounded-full ${isMicMuted ? 'bg-red-600' : 'bg-gray-700'} text-white hover:opacity-90`}
+              >
+                {isMicMuted ? <FiMicOff size={20} /> : <FiMic size={20} />}
+              </button>
+              
+              <button
+                onClick={() => {
+                  if (zegoInstanceRef.current) {
+                    zegoInstanceRef.current.toggleCamera();
+                    setIsCameraOff(!isCameraOff);
+                  }
+                }}
+                className={`p-3 rounded-full ${isCameraOff ? 'bg-red-600' : 'bg-gray-700'} text-white hover:opacity-90`}
+              >
+                {isCameraOff ? <FiVideoOff size={20} /> : <FiVideo size={20} />}
+              </button>
+              
+              {activeRoom.enableScreenShare && (
                 <button
-                  onClick={sendChatMessage}
-                  className="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700"
+                  onClick={() => {
+                    if (zegoInstanceRef.current) {
+                      zegoInstanceRef.current.toggleScreenSharing();
+                    }
+                  }}
+                  className={`p-3 rounded-full ${isScreenSharing ? 'bg-blue-600' : 'bg-gray-700'} text-white hover:opacity-90`}
                 >
-                  <FiSend />
+                  <MdScreenShare size={20} />
+                </button>
+              )}
+              
+              {/* Layout Toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setVideoLayout("grid")}
+                  className={`p-2 rounded ${videoLayout === "grid" ? "bg-blue-600" : "bg-gray-700"} text-white`}
+                >
+                  <FiGrid size={18} />
+                </button>
+                <button
+                  onClick={() => setVideoLayout("speaker")}
+                  className={`p-2 rounded ${videoLayout === "speaker" ? "bg-blue-600" : "bg-gray-700"} text-white`}
+                >
+                  <FiUsers size={18} />
                 </button>
               </div>
             </div>
           </div>
+
+          {/* Sidebar */}
+          <div className="flex">
+            {/* Participants Panel */}
+            {showParticipantsList && (
+              <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col">
+                <div className="p-4 border-b border-gray-800 flex justify-between items-center">
+                  <h3 className="font-bold text-white">
+                    👥 Participants ({activeRoom.currentParticipants?.length || 0})
+                  </h3>
+                  <button
+                    onClick={() => setShowParticipantsList(false)}
+                    className="text-gray-400 hover:text-white"
+                  >
+                    <FiX />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4">
+                  {activeRoom.currentParticipants?.map((p, idx) => (
+                    <div key={idx} className="flex items-center gap-3 p-3 bg-gray-800/50 rounded-lg mb-2">
+                      <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold">
+                        {p.name?.charAt(0)}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-white font-medium">{p.name}</p>
+                        <p className="text-xs text-gray-400">{p.role}</p>
+                      </div>
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Chat Panel */}
+            {activeRoom.enableChat && (
+              <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col">
+                <div className="p-4 border-b border-gray-800">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <FiMessageSquare />
+                    Chat
+                  </h3>
+                </div>
+                
+                <div 
+                  ref={chatContainerRef}
+                  className="flex-1 overflow-y-auto p-4 space-y-4"
+                >
+                  {chatMessages.map((msg) => (
+                    <div key={msg.id} className={`p-3 rounded-lg ${msg.userId === userProfile?.uid ? 'bg-blue-900/30' : 'bg-gray-800/50'}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-bold text-white">{msg.userName}</span>
+                        {msg.userId === userProfile?.uid && (
+                          <span className="text-xs text-gray-400">(You)</span>
+                        )}
+                      </div>
+                      <p className="text-white text-sm">{msg.message}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Chat Input */}
+                <div className="p-4 border-t border-gray-800">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                      placeholder="Type a message..."
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      onClick={sendChatMessage}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      <FiSend />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Controls Bar */}
-        <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-center items-center gap-6">
-          <button
-            onClick={toggleAudio}
-            className={`p-3 rounded-full ${isAudioMuted ? 'bg-rose-600' : 'bg-slate-800'} text-white hover:scale-105 transition-all`}
-          >
-            {isAudioMuted ? <FiMicOff size={20} /> : <FiMic size={20} />}
-          </button>
-          
-          <button
-            onClick={toggleVideo}
-            className={`p-3 rounded-full ${isVideoOff ? 'bg-rose-600' : 'bg-slate-800'} text-white hover:scale-105 transition-all`}
-          >
-            {isVideoOff ? <FiVideoOff size={20} /> : <FiVideoIcon size={20} />}
-          </button>
-          
-          <button
-            onClick={toggleScreenShare}
-            className={`p-3 rounded-full ${screenSharing ? 'bg-emerald-600' : 'bg-slate-800'} text-white hover:scale-105 transition-all`}
-          >
-            <FiShare2 size={20} />
-          </button>
-          
-          <button
-            onClick={() => setViewMode(viewMode === 'grid' ? 'speaker' : 'grid')}
-            className="p-3 rounded-full bg-slate-800 text-white hover:scale-105 transition-all"
-          >
-            {viewMode === 'grid' ? <FiGrid size={20} /> : <FiList size={20} />}
-          </button>
-          
-          <button
-            onClick={endLiveSession}
-            className="p-3 rounded-full bg-rose-600 text-white hover:bg-rose-700 hover:scale-105 transition-all"
-          >
-            <FiX size={20} />
-          </button>
+        {/* Bottom Info Bar */}
+        <div className="p-3 bg-gray-900/90 border-t border-gray-800 text-center">
+          <span className="text-xs text-gray-400">
+            🔒 Secure • 📹 Powered by ZegoCloud • 👥 {activeRoom.currentParticipants?.length || 1} online
+          </span>
         </div>
       </div>
     );
   };
 
-  const renderNotificationBell = () => {
+  const getFilteredClasses = () => {
+    const now = new Date();
+    
+    return classes.filter(cls => {
+      if (viewMode === 'upcoming') {
+        return cls.status === 'scheduled' && cls.scheduledAt > now;
+      } else if (viewMode === 'live') {
+        return cls.status === 'live';
+      } else if (viewMode === 'past') {
+        return cls.status === 'completed' || (cls.scheduledAt < now && cls.status !== 'live');
+      }
+      return true;
+    });
+  };
+
+  const renderMeetingCard = (meeting) => {
+    const isHost = userProfile?.uid === meeting.instructorId || userProfile?.role === 'admin';
+    const canJoin = meeting.status === 'live' || (meeting.status === 'scheduled' && meeting.scheduledAt <= new Date(new Date().getTime() + 30 * 60000));
+    
     return (
-      <div className="relative">
-        <button 
-          className="p-3 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors"
-          onClick={() => setNotificationCount(0)}
-        >
-          <FiBell size={20} />
-          {notificationCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-xs rounded-full flex items-center justify-center">
-              {notificationCount}
-            </span>
-          )}
-        </button>
-        
-        {notifications.length > 0 && (
-          <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border border-slate-200 z-50">
-            <div className="p-4 border-b border-slate-200">
-              <h4 className="font-bold text-slate-900">Notifications</h4>
+      <div key={meeting.id} className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all border border-gray-200">
+        <div className="p-6">
+          {/* Header */}
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  meeting.status === 'live' ? 'bg-red-100 text-red-700 animate-pulse' :
+                  meeting.status === 'completed' ? 'bg-gray-100 text-gray-700' :
+                  'bg-blue-100 text-blue-700'
+                }`}>
+                  {meeting.status === 'live' ? '🔴 LIVE' : 
+                   meeting.status === 'completed' ? '✅ ENDED' : '📅 UPCOMING'}
+                </span>
+                <span className={`px-2 py-1 rounded text-xs ${
+                  meeting.meetingType === 'teacher' ? 'bg-purple-100 text-purple-700' :
+                  meeting.meetingType === 'admin' ? 'bg-yellow-100 text-yellow-700' :
+                  meeting.meetingType === 'student' ? 'bg-green-100 text-green-700' :
+                  'bg-blue-100 text-blue-700'
+                }`}>
+                  {meeting.meetingType.toUpperCase()}
+                </span>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900">{meeting.topic}</h3>
+              <p className="text-gray-600 text-sm mt-1 line-clamp-2">{meeting.description}</p>
             </div>
-            <div className="max-h-96 overflow-y-auto">
-              {notifications.map(notification => (
-                <div 
-                  key={notification.id}
-                  className="p-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
-                  onClick={() => markNotificationAsRead(notification.id)}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-full ${
-                      notification.type === 'reminder' ? 'bg-amber-100 text-amber-600' :
-                      notification.type === 'class_scheduled' ? 'bg-emerald-100 text-emerald-600' :
-                      notification.type === 'admin_meeting' ? 'bg-blue-100 text-blue-600' :
-                      'bg-slate-100 text-slate-600'
-                    }`}>
-                      <FiBell size={16} />
-                    </div>
-                    <div className="flex-1">
-                      <h5 className="font-medium text-slate-900">{notification.title}</h5>
-                      <p className="text-sm text-slate-600">{notification.message}</p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        {notification.createdAt?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    </div>
-                  </div>
+            
+            {/* Menu Button */}
+            <div className="relative">
+              <button
+                onClick={() => setActiveMeetingMenu(activeMeetingMenu === meeting.id ? null : meeting.id)}
+                className="p-2 text-gray-400 hover:text-gray-700"
+              >
+                <FiMoreVertical />
+              </button>
+              
+              {activeMeetingMenu === meeting.id && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-10">
+                  <button
+                    onClick={() => {
+                      setActiveMeetingMenu(null);
+                      navigator.clipboard.writeText(`${window.location.origin}/meeting/${meeting.id}`);
+                      toast.success("Link copied!");
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <FiCopy /> Copy Link
+                  </button>
+                  
+                  {(userProfile?.role === 'admin' || isHost) && (
+                    <>
+                      <div className="border-t"></div>
+                      <button
+                        onClick={() => {
+                          setActiveMeetingMenu(null);
+                          deleteMeeting(meeting.id);
+                        }}
+                        className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      >
+                        <FiTrash2 /> Delete Meeting
+                      </button>
+                    </>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
           </div>
-        )}
+          
+          {/* Details */}
+          <div className="space-y-3 mb-6">
+            <div className="flex items-center gap-2 text-gray-700">
+              <FiUser />
+              <span className="font-medium">{meeting.instructor}</span>
+              {isHost && <span className="text-xs text-blue-600">(Host)</span>}
+            </div>
+            
+            {meeting.scheduledAt && (
+              <div className="flex items-center gap-2 text-gray-700">
+                <FiCalendar />
+                <span>{meeting.scheduledAt.toLocaleDateString()}</span>
+                <FiClock className="ml-2" />
+                <span>{meeting.scheduledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+            )}
+            
+            <div className="flex items-center gap-2 text-gray-700">
+              <FiUsers />
+              <span>{meeting.participants?.length || 0} invited</span>
+              {meeting.currentParticipants?.length > 0 && (
+                <span className="text-green-600 font-medium">
+                  • {meeting.currentParticipants.length} online
+                </span>
+              )}
+            </div>
+            
+            {/* Features */}
+            <div className="flex flex-wrap gap-2 pt-3">
+              {meeting.enableChat && (
+                <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">💬 Chat</span>
+              )}
+              {meeting.enableScreenShare && (
+                <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">🖥️ Share</span>
+              )}
+              {meeting.isPrivate && (
+                <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">🔒 Private</span>
+              )}
+            </div>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="flex justify-between items-center">
+            <div>
+              {meeting.status === 'live' && meeting.currentParticipants?.length > 0 && (
+                <div className="flex -space-x-2">
+                  {meeting.currentParticipants.slice(0, 3).map((p, idx) => (
+                    <div key={idx} className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold border-2 border-white">
+                      {p.name?.charAt(0)}
+                    </div>
+                  ))}
+                  {meeting.currentParticipants.length > 3 && (
+                    <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-700 text-xs border-2 border-white">
+                      +{meeting.currentParticipants.length - 3}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-2">
+              {(userProfile?.role === 'admin' || isHost) && meeting.status !== 'completed' && (
+                <button
+                  onClick={() => deleteMeeting(meeting.id)}
+                  className="p-2 text-gray-400 hover:text-red-600"
+                  title="Delete"
+                >
+                  <FiTrash2 />
+                </button>
+              )}
+              
+              {canJoin ? (
+                <button
+                  onClick={() => handleJoinMeeting(meeting)}
+                  className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                    meeting.status === 'live' 
+                      ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse' 
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                >
+                  <FiVideo />
+                  {meeting.status === 'live' ? 'Join Now' : isHost ? 'Start' : 'Join'}
+                </button>
+              ) : (
+                <span className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg">
+                  Not available
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Password Modal
+  const renderPasswordModal = () => {
+    if (!showPasswordModal || !passwordMeeting) return null;
+
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+          <h3 className="text-2xl font-bold text-gray-900 mb-2">Private Meeting</h3>
+          <p className="text-gray-600 mb-6">
+            Enter password to join <strong>{passwordMeeting.topic}</strong>
+          </p>
+          
+          <input
+            type="password"
+            value={meetingPassword}
+            onChange={(e) => setMeetingPassword(e.target.value)}
+            placeholder="Enter meeting password"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg mb-6 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            autoFocus
+          />
+          
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                setShowPasswordModal(false);
+                setPasswordMeeting(null);
+                setMeetingPassword("");
+              }}
+              className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={verifyPasswordAndJoin}
+              className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Join Meeting
+            </button>
+          </div>
+        </div>
       </div>
     );
   };
 
   if (isLiveActive) {
-    return renderLiveStudio();
+    return (
+      <>
+        {renderMeetingStudio()}
+        {renderPasswordModal()}
+      </>
+    );
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Live Classes</h1>
-          <p className="text-slate-600">Schedule and join interactive live sessions</p>
+          <h1 className="text-3xl font-bold text-gray-900">Video Meetings</h1>
+          <p className="text-gray-600">Schedule and join video meetings like Zoom/Google Meet</p>
         </div>
         
-        <div className="flex items-center gap-4">
-          {renderNotificationBell()}
+        <div className="flex flex-wrap gap-3">
+          {/* View Tabs */}
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            {['upcoming', 'live', 'past'].map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`px-4 py-2 rounded-md font-medium capitalize transition-colors ${
+                  viewMode === mode 
+                    ? 'bg-white text-gray-900 shadow' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
           
-          {userProfile?.role === 'admin' && (
-            <button
-              onClick={startAdminMeeting}
-              className="px-6 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 flex items-center gap-2"
-            >
-              <FiVideo />
-              Start Admin Meeting
-            </button>
-          )}
-          
+          {/* Schedule Button */}
           <button
             onClick={() => setIsModalOpen(true)}
-            className="px-6 py-3 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center gap-2"
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2"
           >
             <FiPlus />
-            Schedule Live Class
+            Schedule Meeting
           </button>
+          
+          {/* Quick Meeting for Admin */}
+          {userProfile?.role === 'admin' && (
+            <button
+              onClick={async () => {
+                const meetingId = `instant_${Date.now()}`;
+                const meetingData = {
+                  id: meetingId,
+                  topic: "Instant Admin Meeting",
+                  instructor: userProfile.name,
+                  instructorId: userProfile.uid,
+                  meetingType: 'admin',
+                  scheduledAt: new Date(),
+                  status: 'live',
+                  enableChat: true,
+                  enableScreenShare: true,
+                  isPrivate: false,
+                  createdAt: serverTimestamp()
+                };
+                
+                await addDoc(collection(db, "liveMeetings"), meetingData);
+                await startMeeting({...meetingData, id: meetingId});
+              }}
+              className="px-6 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 flex items-center gap-2"
+            >
+              <MdAdminPanelSettings />
+              Quick Meeting
+            </button>
+          )}
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-xl border shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-slate-900">{classes.length}</h3>
-              <p className="text-sm text-slate-600">Scheduled Classes</p>
+              <p className="text-sm text-gray-500">Total Meetings</p>
+              <h3 className="text-2xl font-bold text-gray-900">{classes.length}</h3>
             </div>
-            <div className="p-3 rounded-lg bg-blue-100 text-blue-600">
-              <FiCalendar size={24} />
-            </div>
+            <FiVideo className="text-blue-500 text-2xl" />
           </div>
         </div>
         
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="bg-white p-6 rounded-xl border shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-slate-900">
+              <p className="text-sm text-gray-500">Live Now</p>
+              <h3 className="text-2xl font-bold text-gray-900">
                 {classes.filter(c => c.status === 'live').length}
               </h3>
-              <p className="text-sm text-slate-600">Live Now</p>
             </div>
-            <div className="p-3 rounded-lg bg-emerald-100 text-emerald-600">
-              <FiPlayCircle size={24} />
-            </div>
+            <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
           </div>
         </div>
         
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="bg-white p-6 rounded-xl border shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-slate-900">
-                {allTeachers.length}
+              <p className="text-sm text-gray-500">Upcoming</p>
+              <h3 className="text-2xl font-bold text-gray-900">
+                {classes.filter(c => c.status === 'scheduled').length}
               </h3>
-              <p className="text-sm text-slate-600">Teachers</p>
             </div>
-            <div className="p-3 rounded-lg bg-purple-100 text-purple-600">
-              <FiUser size={24} />
-            </div>
+            <FiCalendar className="text-green-500 text-2xl" />
           </div>
         </div>
         
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="bg-white p-6 rounded-xl border shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-slate-900">
-                {classes.reduce((acc, cls) => acc + (cls.participants?.length || 0), 0)}
+              <p className="text-sm text-gray-500">Participants</p>
+              <h3 className="text-2xl font-bold text-gray-900">
+                {classes.reduce((sum, c) => sum + (c.currentParticipants?.length || 0), 0)}
               </h3>
-              <p className="text-sm text-slate-600">Total Participants</p>
             </div>
-            <div className="p-3 rounded-lg bg-amber-100 text-amber-600">
-              <FiUsers size={24} />
-            </div>
+            <FiUsers className="text-purple-500 text-2xl" />
           </div>
         </div>
       </div>
 
-      {/* Live Classes Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {classes.map((liveClass) => (
-          <div key={liveClass.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden hover:shadow-lg transition-shadow">
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-bold ${
-                    liveClass.status === 'live' ? 'bg-emerald-100 text-emerald-700' :
-                    liveClass.status === 'completed' ? 'bg-slate-100 text-slate-700' :
-                    'bg-blue-100 text-blue-700'
-                  }`}>
-                    {liveClass.status === 'live' ? 'LIVE NOW' : 
-                     liveClass.status === 'completed' ? 'COMPLETED' : 'SCHEDULED'}
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900 mt-2">{liveClass.topic}</h3>
-                  <p className="text-sm text-slate-600 mt-1">{liveClass.description}</p>
-                </div>
-                
-                {liveClass.isPrivate && (
-                  <FiLock className="text-slate-400" />
-                )}
-              </div>
-              
-              <div className="space-y-3 mb-6">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <FiUser />
-                  <span>{liveClass.instructor}</span>
-                </div>
-                
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <FiCalendar />
-                  <span>{liveClass.scheduledAt?.toLocaleDateString()}</span>
-                </div>
-                
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <FiClock />
-                  <span>{liveClass.scheduledAt?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="text-xs text-slate-500">({liveClass.duration} mins)</span>
-                </div>
-                
-                {liveClass.courseId && (
-                  <div className="flex items-center gap-2 text-sm text-slate-600">
-                    <FiBookOpen />
-                    <span>Course: {courses.find(c => c.id === liveClass.courseId)?.title || 'N/A'}</span>
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <FiUsers />
-                  <span>{liveClass.participants?.length || 0} participants</span>
-                </div>
-                
-                {liveClass.status === 'scheduled' && (
-                  <button
-                    onClick={() => joinLiveClass(liveClass)}
-                    className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800"
-                  >
-                    Join Now
-                  </button>
-                )}
-                
-                {liveClass.status === 'live' && userProfile?.role === 'admin' && (
-                  <button
-                    onClick={() => joinLiveClass(liveClass)}
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700"
-                  >
-                    Join Live
-                  </button>
-                )}
-                
-                {(userProfile?.role === 'admin' || liveClass.instructorId === userProfile?.uid) && (
-                  <button
-                    onClick={() => deleteDoc(doc(db, "liveClasses", liveClass.id))}
-                    className="p-2 text-slate-400 hover:text-rose-600 transition-colors"
-                  >
-                    <FiTrash2 size={18} />
-                  </button>
-                )}
-              </div>
-            </div>
+      {/* Meetings Grid */}
+      {getFilteredClasses().length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {getFilteredClasses().map(renderMeetingCard)}
+        </div>
+      ) : (
+        <div className="text-center py-16 bg-white rounded-xl border">
+          <div className="w-24 h-24 mx-auto bg-blue-50 rounded-full flex items-center justify-center mb-6">
+            <FiVideo className="text-blue-500 text-4xl" />
           </div>
-        ))}
-      </div>
+          <h3 className="text-2xl font-bold text-gray-900 mb-3">No {viewMode} meetings</h3>
+          <p className="text-gray-600 mb-6">
+            {viewMode === 'upcoming' 
+              ? 'Schedule your first meeting to get started' 
+              : viewMode === 'live' 
+              ? 'No live meetings at the moment' 
+              : 'No past meetings found'}
+          </p>
+          {viewMode === 'upcoming' && (
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="px-8 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
+            >
+              Schedule Meeting
+            </button>
+          )}
+        </div>
+      )}
 
-      {/* Modal for Scheduling */}
+      {/* Schedule Meeting Modal */}
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden"
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden"
             >
-              <div className="p-6 border-b border-slate-200 flex justify-between items-center">
-                <h2 className="text-2xl font-bold text-slate-900">Schedule Live Class</h2>
-                <button
+              <div className="p-6 border-b flex justify-between items-center">
+                <h2 className="text-2xl font-bold text-gray-900">Schedule Meeting</h2>
+                <button 
                   onClick={() => setIsModalOpen(false)}
-                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-2 hover:bg-gray-100 rounded-lg"
                 >
-                  <FiX size={24} />
+                  <FiX />
                 </button>
               </div>
               
-              <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                
+                try {
+                  const scheduledAt = new Date(`${formData.date}T${formData.time}`);
+                  
+                  let participants = [];
+                  let assignedTeacherIds = [];
+                  let assignedStudentIds = [];
+                  
+                  switch (formData.meetingType) {
+                    case 'teacher':
+                      assignedTeacherIds = selectedTeachers.map(t => t.id);
+                      break;
+                    case 'student':
+                      assignedStudentIds = selectedStudents.map(s => s.id);
+                      break;
+                    case 'class':
+                      if (formData.courseId) {
+                        const enrollSnap = await getDocs(
+                          query(collection(db, "enrollments"), where("courseId", "==", formData.courseId))
+                        );
+                        participants = enrollSnap.docs.map(doc => doc.data().studentId);
+                      }
+                      break;
+                    case 'admin':
+                      const adminsSnap = await getDocs(
+                        query(collection(db, "users"), where("role", "==", "admin"))
+                      );
+                      participants = adminsSnap.docs.map(doc => doc.id);
+                      break;
+                  }
+
+                  const meetingData = {
+                    topic: formData.topic,
+                    description: formData.description,
+                    instructor: formData.instructor || userProfile.name,
+                    instructorId: userProfile.uid,
+                    meetingType: formData.meetingType,
+                    scheduledAt: scheduledAt,
+                    duration: formData.duration,
+                    status: "scheduled",
+                    isPrivate: formData.isPrivate,
+                    password: formData.isPrivate ? formData.password : "",
+                    maxParticipants: formData.maxParticipants,
+                    enableChat: formData.enableChat,
+                    enableScreenShare: formData.enableScreenShare,
+                    enableRecording: formData.enableRecording,
+                    createdAt: serverTimestamp(),
+                    participants: participants,
+                    assignedTeacherIds: assignedTeacherIds,
+                    assignedStudentIds: assignedStudentIds,
+                    courseId: formData.courseId || null
+                  };
+
+                  await addDoc(collection(db, "liveMeetings"), meetingData);
+
+                  toast.success(`${formData.meetingType.charAt(0).toUpperCase() + formData.meetingType.slice(1)} meeting scheduled!`);
+                  
+                  setIsModalOpen(false);
+                  setFormData({ 
+                    topic: "", 
+                    instructor: userProfile?.role === 'admin' ? "" : userProfile.name, 
+                    date: "", 
+                    time: "",
+                    duration: 60,
+                    courseId: "",
+                    description: "",
+                    isPrivate: false,
+                    password: "",
+                    assignedTeacherId: "",
+                    assignedStudentIds: [],
+                    meetingType: "class",
+                    maxParticipants: 50,
+                    enableChat: true,
+                    enableScreenShare: true,
+                    enableRecording: false,
+                    allowAllParticipantsVideo: true,
+                    allowAllParticipantsAudio: true,
+                    autoRecord: false
+                  });
+                  setSelectedTeachers([]);
+                  setSelectedStudents([]);
+                  
+                } catch (error) {
+                  console.error("Error:", error);
+                  toast.error("Failed to schedule meeting");
+                }
+              }} className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+                
+                {/* Meeting Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">Meeting Type *</label>
+                  <div className="grid grid-cols-4 gap-3">
+                    {[
+                      { id: 'class', label: 'Class', desc: 'For students', icon: '🎓' },
+                      { id: 'teacher', label: 'Teacher', desc: 'Staff meetings', icon: '👨‍🏫' },
+                      { id: 'student', label: 'Student', desc: 'Student meetings', icon: '👨‍🎓' },
+                      { id: 'admin', label: 'Admin', desc: 'Admin meetings', icon: '🛡️' }
+                    ].map((type) => (
+                      <button
+                        key={type.id}
+                        type="button"
+                        onClick={() => setFormData({...formData, meetingType: type.id})}
+                        className={`p-4 rounded-lg border-2 text-center transition-all ${
+                          formData.meetingType === type.id
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="text-2xl mb-2">{type.icon}</div>
+                        <div className="font-medium">{type.label}</div>
+                        <div className="text-xs text-gray-500">{type.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Basic Info */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Class Topic *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Topic *</label>
                     <input
                       type="text"
                       required
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       value={formData.topic}
                       onChange={(e) => setFormData({...formData, topic: e.target.value})}
-                      placeholder="Enter class topic"
+                      placeholder="Meeting topic"
                     />
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Instructor *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      value={formData.instructor}
-                      onChange={(e) => setFormData({...formData, instructor: e.target.value})}
-                      placeholder="Instructor name"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Description
-                  </label>
-                  <textarea
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                    rows="3"
-                    value={formData.description}
-                    onChange={(e) => setFormData({...formData, description: e.target.value})}
-                    placeholder="Describe what this class will cover"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Date *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      value={formData.date}
-                      onChange={(e) => setFormData({...formData, date: e.target.value})}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Time *
-                    </label>
-                    <input
-                      type="time"
-                      required
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      value={formData.time}
-                      onChange={(e) => setFormData({...formData, time: e.target.value})}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Duration (minutes) *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Duration *</label>
                     <select
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       value={formData.duration}
                       onChange={(e) => setFormData({...formData, duration: e.target.value})}
                     >
@@ -1025,93 +1222,219 @@ const LiveClasses = () => {
                       <option value="60">1 hour</option>
                       <option value="90">1.5 hours</option>
                       <option value="120">2 hours</option>
+                      <option value="180">3 hours</option>
                     </select>
                   </div>
                 </div>
                 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                  <textarea
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    rows="3"
+                    value={formData.description}
+                    onChange={(e) => setFormData({...formData, description: e.target.value})}
+                    placeholder="Meeting agenda and details..."
+                  />
+                </div>
+                
+                {/* Date & Time */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Course (Optional)
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Date *</label>
+                    <input
+                      type="date"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      value={formData.date}
+                      onChange={(e) => setFormData({...formData, date: e.target.value})}
+                      min={new Date().toISOString().split('T')[0]}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Time *</label>
+                    <input
+                      type="time"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      value={formData.time}
+                      onChange={(e) => setFormData({...formData, time: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* Course Selection for Class Meetings */}
+                {formData.meetingType === 'class' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Course (Optional)</label>
                     <select
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       value={formData.courseId}
                       onChange={(e) => setFormData({...formData, courseId: e.target.value})}
                     >
-                      <option value="">Select a course</option>
+                      <option value="">Select course</option>
                       {courses.map(course => (
-                        <option key={course.id} value={course.id}>
-                          {course.title}
-                        </option>
+                        <option key={course.id} value={course.id}>{course.title}</option>
                       ))}
                     </select>
                   </div>
-                  
-                  {userProfile?.role === 'admin' && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Assign Teacher (Optional)
-                      </label>
-                      <select
-                        className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                        value={formData.assignedTeacherId}
-                        onChange={(e) => setFormData({...formData, assignedTeacherId: e.target.value})}
+                )}
+
+                {/* Teacher Selection */}
+                {formData.meetingType === 'teacher' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Select Teachers
+                      <span className="ml-2 text-sm text-gray-500">({selectedTeachers.length} selected)</span>
+                    </label>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowTeacherSelector(!showTeacherSelector)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg text-left flex justify-between items-center"
                       >
-                        <option value="">Select a teacher</option>
-                        {allTeachers.map(teacher => (
-                          <option key={teacher.id} value={teacher.id}>
+                        <span>
+                          {selectedTeachers.length === 0 
+                            ? "Select teachers..." 
+                            : `${selectedTeachers.length} teachers selected`}
+                        </span>
+                        {showTeacherSelector ? <FiChevronUp /> : <FiChevronDown />}
+                      </button>
+                      
+                      {showTeacherSelector && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {allTeachers.map(teacher => (
+                            <label key={teacher.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedTeachers.some(t => t.id === teacher.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedTeachers([...selectedTeachers, teacher]);
+                                  } else {
+                                    setSelectedTeachers(selectedTeachers.filter(t => t.id !== teacher.id));
+                                  }
+                                }}
+                                className="w-4 h-4"
+                              />
+                              <div>
+                                <p className="font-medium">{teacher.name}</p>
+                                <p className="text-sm text-gray-500">{teacher.email}</p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {selectedTeachers.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedTeachers.map(teacher => (
+                          <span key={teacher.id} className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
                             {teacher.name}
-                          </option>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTeachers(prev => prev.filter(t => t.id !== teacher.id))}
+                              className="text-blue-600 hover:text-blue-800"
+                            >
+                              <FiX size={14} />
+                            </button>
+                          </span>
                         ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Privacy Settings */}
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Private Class
-                      </label>
-                      <p className="text-sm text-slate-500">Require password to join</p>
+                      <p className="font-medium text-gray-700">Private Meeting</p>
+                      <p className="text-sm text-gray-500">Require password to join</p>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
+                    <label className="switch">
                       <input
                         type="checkbox"
                         checked={formData.isPrivate}
                         onChange={(e) => setFormData({...formData, isPrivate: e.target.checked})}
-                        className="sr-only peer"
                       />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-900"></div>
+                      <span className="slider round"></span>
                     </label>
                   </div>
                   
                   {formData.isPrivate && (
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Password *
-                      </label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
                       <input
                         type="password"
-                        required={formData.isPrivate}
-                        className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                        required
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                         value={formData.password}
                         onChange={(e) => setFormData({...formData, password: e.target.value})}
-                        placeholder="Enter class password"
+                        placeholder="Set meeting password"
                       />
                     </div>
                   )}
                 </div>
+
+                {/* Features */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">Meeting Features</label>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={formData.enableChat}
+                        onChange={(e) => setFormData({...formData, enableChat: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <div>
+                        <p className="font-medium">Chat</p>
+                        <p className="text-sm text-gray-500">Enable text chat</p>
+                      </div>
+                    </label>
+                    
+                    <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={formData.enableScreenShare}
+                        onChange={(e) => setFormData({...formData, enableScreenShare: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <div>
+                        <p className="font-medium">Screen Share</p>
+                        <p className="text-sm text-gray-500">Allow sharing</p>
+                      </div>
+                    </label>
+                    
+                    <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={formData.enableRecording}
+                        onChange={(e) => setFormData({...formData, enableRecording: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <div>
+                        <p className="font-medium">Recording</p>
+                        <p className="text-sm text-gray-500">Record meeting</p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
                 
-                <div className="pt-4 border-t border-slate-200">
+                {/* Submit */}
+                <div className="pt-6 border-t">
                   <button
                     type="submit"
-                    className="w-full py-3 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 transition-colors"
+                    className="w-full py-4 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors"
                   >
-                    Schedule Live Class
+                    Schedule {formData.meetingType.charAt(0).toUpperCase() + formData.meetingType.slice(1)} Meeting
                   </button>
+                  <p className="text-center text-sm text-gray-500 mt-4">
+                    Powered by ZegoCloud • Secure video conferencing
+                  </p>
                 </div>
               </form>
             </motion.div>
@@ -1119,22 +1442,62 @@ const LiveClasses = () => {
         )}
       </AnimatePresence>
 
-      {/* No Classes Message */}
-      {classes.length === 0 && (
-        <div className="text-center py-16">
-          <div className="w-20 h-20 mx-auto bg-slate-100 rounded-full flex items-center justify-center mb-6">
-            <FiVideo className="text-slate-400 text-3xl" />
-          </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">No Live Classes Scheduled</h3>
-          <p className="text-slate-600 mb-6">Schedule your first live class to get started</p>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="px-6 py-3 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800"
-          >
-            Schedule First Class
-          </button>
-        </div>
-      )}
+      {/* Password Modal */}
+      {renderPasswordModal()}
+
+      {/* CSS for toggle switch */}
+      <style jsx>{`
+        .switch {
+          position: relative;
+          display: inline-block;
+          width: 60px;
+          height: 34px;
+        }
+        
+        .switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        
+        .slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: #ccc;
+          transition: .4s;
+        }
+        
+        .slider:before {
+          position: absolute;
+          content: "";
+          height: 26px;
+          width: 26px;
+          left: 4px;
+          bottom: 4px;
+          background-color: white;
+          transition: .4s;
+        }
+        
+        input:checked + .slider {
+          background-color: #3b82f6;
+        }
+        
+        input:checked + .slider:before {
+          transform: translateX(26px);
+        }
+        
+        .slider.round {
+          border-radius: 34px;
+        }
+        
+        .slider.round:before {
+          border-radius: 50%;
+        }
+      `}</style>
     </div>
   );
 };

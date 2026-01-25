@@ -318,191 +318,56 @@ const Teachers = () => {
 
   // ADD TEACHER WITH PROPER AUTHENTICATION - FIXED AUTO LOGIN ISSUE
   const handleAddTeacher = async (e) => {
-    e.preventDefault();
-    
-    // Check if current user is admin
-    if (!currentAdmin || currentAdmin.role !== 'admin') {
-      toast.error("Only admins can add teachers");
-      return;
-    }
-    
-    if (!validateForm()) {
-      return;
-    }
-    
-    setLoading(true);
-    setIsAddingTeacher(true);
-    
-    // Store current user info before any auth changes
-    const currentUserBefore = auth.currentUser;
-    
-    try {
-      // Generate employee ID if not provided
-      const empId = newTeacher.employeeId || generateEmployeeId();
-      
-      let authUserId = null;
-      let tempPassword = null;
-      
-      if (authMethod === "email") {
-        // Create user in Firebase Authentication with temporary email
-        const tempEmail = `temp.${Date.now()}.${empId}@teacher.temp`;
-        const tempPassword = "TempPass123!";
-        
-        const userCredential = await createUserWithEmailAndPassword(
-          auth,
-          tempEmail,
-          tempPassword
-        );
-        
-        authUserId = userCredential.user.uid;
-        
-        // Update user profile with real email
-        await updateDoc(doc(db, "users", authUserId), {
-          email: newTeacher.email,
-          name: newTeacher.name,
-          phone: newTeacher.phone,
-          displayEmail: newTeacher.email // Store real email separately
-        });
-        
-        // Sign out the temporary user immediately
-        await signOut(auth);
-        
-        // Sign back in as admin
-        if (currentUserBefore) {
-          await signInWithEmailAndPassword(
-            auth,
-            currentAdmin.email,
-            localStorage.getItem('admin_temp_password') || "AdminPass123!" // You should handle this securely
-          );
-        }
-        
-      } else if (authMethod === "phone") {
-        // Create temp user for phone authentication
-        const tempEmail = `phone.${empId}@teacher.temp`;
-        
-        const userCredential = await createUserWithEmailAndPassword(
-          auth,
-          tempEmail,
-          Math.random().toString(36).slice(-10) + "Aa@123"
-        );
-        
-        authUserId = userCredential.user.uid;
-        
-        // Sign out the temporary user
-        await signOut(auth);
-        
-        // Sign back in as admin
-        if (currentUserBefore) {
-          await signInWithEmailAndPassword(
-            auth,
-            currentAdmin.email,
-            localStorage.getItem('admin_temp_password') || "AdminPass123!"
-          );
-        }
-      }
-      
-      // Prepare teacher data
-      const teacherData = {
-        name: newTeacher.name.trim(),
-        email: newTeacher.email.trim(),
-        phone: newTeacher.phone.trim(),
-        department: newTeacher.department.trim(),
-        subject: newTeacher.subject.trim(),
-        employeeId: empId,
-        role: "teacher",
-        status: "active",
-        loginMethod: authMethod,
-        createdAt: serverTimestamp(),
-        createdBy: {
-          uid: currentAdmin.uid,
-          name: currentAdmin.name,
-          email: currentAdmin.email
-        },
-        joiningDate: newTeacher.joiningDate,
-        qualification: newTeacher.qualification.trim(),
-        experience: newTeacher.experience.trim(),
-        address: newTeacher.address.trim(),
-        designation: newTeacher.designation.trim(),
-        specialization: newTeacher.specialization.trim(),
-        officeHours: newTeacher.officeHours.trim(),
-        isVerified: newTeacher.isVerified,
-        allowCourseCreation: newTeacher.allowCourseCreation,
-        lastLogin: null,
-        totalLogins: 0,
-        lastActivity: null,
-        uid: authUserId,
-        profileImage: newTeacher.profileImage || "",
-        temporaryPassword: authMethod === "email" ? newTeacher.password : undefined
-      };
-      
-      // Save to Firestore using the auth UID
-      if (authUserId) {
-        await setDoc(doc(db, "users", authUserId), teacherData);
+  e.preventDefault();
+  if (!validateForm()) return;
+  
+  setLoading(true);
+  const adminEmail = currentAdmin?.email;
+  const adminPass = localStorage.getItem('admin_temp_password'); 
+
+  try {
+    // 1. Naya Teacher Account banayein
+    const userCredential = await createUserWithEmailAndPassword(auth, newTeacher.email, newTeacher.password);
+    const newUid = userCredential.user.uid;
+
+    // 2. Firestore mein data save karein (setDoc use karein)
+    await setDoc(doc(db, "users", newUid), {
+      ...newTeacher,
+      uid: newUid,
+      role: "teacher",
+      status: "active",
+      createdAt: serverTimestamp()
+    });
+
+    // 3. Naye teacher ko logout karein
+    await signOut(auth);
+
+    // 4. Admin session restore karein
+    if (adminEmail && adminPass) {
+      await signInWithEmailAndPassword(auth, adminEmail, adminPass);
+      toast.success("Teacher added & Admin session active!");
+    } else {
+      // Agar password nahi hai toh manual prompt lein
+      const manualPass = prompt("Teacher added, but please enter Admin Password to stay on this page:");
+      if (manualPass) {
+        await signInWithEmailAndPassword(auth, adminEmail, manualPass);
+        toast.success("Session Restored");
       } else {
-        const docRef = await addDoc(collection(db, "users"), teacherData);
-        // Update with the generated ID
-        await updateDoc(docRef, { uid: docRef.id });
+        window.location.reload(); // Refresh to trigger protection redirect
       }
-      
-      // Create a credentials record for the teacher
-      await addDoc(collection(db, "teacherCredentials"), {
-        teacherId: authUserId || empId,
-        email: newTeacher.email,
-        password: authMethod === "email" ? newTeacher.password : "OTP Login",
-        sentAt: serverTimestamp(),
-        sentBy: currentAdmin.uid,
-        status: "pending"
-      });
-      
-      // Show success message
-      toast.success(
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <FiCheckCircle className="text-green-500 text-xl" />
-            <p className="font-bold text-lg">Teacher Added Successfully!</p>
-          </div>
-          <div className="text-sm space-y-1 bg-green-50 p-3 rounded-lg">
-            <p><span className="font-semibold">Name:</span> {teacherData.name}</p>
-            <p><span className="font-semibold">ID:</span> {teacherData.employeeId}</p>
-            <p><span className="font-semibold">Email:</span> {teacherData.email}</p>
-            <p><span className="font-semibold">Department:</span> {teacherData.department}</p>
-            {authMethod === "email" && (
-              <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
-                <p className="font-semibold text-yellow-700">⚠️ Note:</p>
-                <p className="text-yellow-600 text-xs">Password was set. Teacher needs to reset password on first login.</p>
-              </div>
-            )}
-          </div>
-        </div>,
-        { duration: 8000, icon: '🎉' }
-      );
-      
-      // Reset and close
-      setShowAddModal(false);
-      resetNewTeacherForm();
-      
-    } catch (error) {
-      console.error("Error adding teacher:", error);
-      
-      // Always try to restore admin session on error
-      try {
-        if (currentUserBefore) {
-          await signInWithEmailAndPassword(
-            auth,
-            currentAdmin.email,
-            localStorage.getItem('admin_temp_password') || "AdminPass123!"
-          );
-        }
-      } catch (restoreError) {
-        console.error("Failed to restore admin session:", restoreError);
-      }
-      
-      handleFirebaseError(error);
-    } finally {
-      setLoading(false);
-      setIsAddingTeacher(false);
     }
-  };
+    
+    setShowAddModal(false);
+
+  } catch (error) {
+    console.error("Critical Error:", error);
+    // Error aane par Admin ko wapas login karane ki koshish karein
+    if (adminEmail && adminPass) await signInWithEmailAndPassword(auth, adminEmail, adminPass);
+    toast.error("Permission Denied: Update Firestore Rules or check Admin Password");
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Handle Firebase errors
   const handleFirebaseError = (error) => {

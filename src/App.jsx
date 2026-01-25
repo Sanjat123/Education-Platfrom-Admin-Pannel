@@ -23,13 +23,31 @@ import ManageLectures from "./pages/ManageLectures";
 import Teachers from "./pages/Teachers";
 import Payments from "./pages/Payments";
 import Analytics from "./pages/Analytics";
-import Settings from "./pages/Settings"; // ✅ Added Settings page import
+import Settings from "./pages/Settings";
 
-// Student & Faculty Pages
+// Student pages 
 import StudentDashboard from "./pages/StudentDashboard";
-import MyCourses from "./pages/MyCourses";
+import StudentMyCourses from "./pages/MyCourses";
+
+// Faculty Pages
+import FacultyDashboard from "./pages/faculty/Dashboard";
+import FacultyMyCourses from "./pages/faculty/MyCourses";
+import FacultyStudents from "./pages/faculty/Students";
+import FacultyLive from "./pages/faculty/Live";
+import FacultyAssignments from "./pages/faculty/Assignments";
+import FacultyLectures from "./pages/faculty/Lectures";
+import FacultySchedule from "./pages/faculty/Schedule";
+import FacultyMessages from "./pages/faculty/Messages";
+import FacultyAnalytics from "./pages/faculty/Analytics";
+import FacultyResources from "./pages/faculty/Resources";
+import FacultyAttendance from "./pages/faculty/Attendance";
+import FacultyGrades from "./pages/faculty/Grades";
+import FacultySupport from "./pages/faculty/Support";
+import FacultySearch from "./pages/faculty/Search";
+import FacultyNotifications from "./pages/faculty/Notifications";
+import FacultyActivity from "./pages/faculty/Activity";
+import FacultySettings from "./pages/faculty/Settings";
 import CourseView from "./pages/CourseView"; 
-import FacultyDashboard from "./pages/FacultyDashboard";
 import LiveClasses from "./pages/LiveClasses";
 
 /**
@@ -148,7 +166,7 @@ function App() {
         "/admin/courses/manage/",
         "/admin/payments",
         "/admin/analytics",
-        "/admin/settings", // ✅ Added settings path
+        "/admin/settings",
         "/admin/live"
       ];
       
@@ -229,7 +247,7 @@ function App() {
               <Route path="courses/manage/:courseId" element={<ManageLectures />} />
               <Route path="payments" element={<Payments />} />
               <Route path="analytics" element={<Analytics />} />
-              <Route path="settings" element={<Settings />} /> {/* ✅ Added Settings route */}
+              <Route path="settings" element={<Settings />} />
               <Route path="live" element={<LiveClasses />} />
             </Route>
 
@@ -244,8 +262,26 @@ function App() {
             >
               <Route index element={<FacultyDashboard />} />
               <Route path="dashboard" element={<FacultyDashboard />} />
-              <Route path="live" element={<LiveClasses />} />
-              <Route path="students" element={<Students />} />
+              <Route path="courses" element={<FacultyMyCourses />} />
+              <Route path="students" element={<FacultyStudents />} />
+              <Route path="live" element={<FacultyLive />} />
+              <Route path="assignments" element={<FacultyAssignments />} />
+              <Route path="lectures" element={<FacultyLectures />} />
+              <Route path="schedule" element={<FacultySchedule />} />
+              <Route path="messages" element={<FacultyMessages />} />
+              <Route path="analytics" element={<FacultyAnalytics />} />
+              <Route path="resources" element={<FacultyResources />} />
+              <Route path="attendance" element={<FacultyAttendance />} />
+              <Route path="grades" element={<FacultyGrades />} />
+              <Route path="support" element={<FacultySupport />} />
+              <Route path="search" element={<FacultySearch />} />
+              <Route path="notifications" element={<FacultyNotifications />} />
+              <Route path="activity" element={<FacultyActivity />} />
+              <Route path="settings" element={<FacultySettings />} />
+              <Route path="courses/new" element={<FacultyMyCourses />} />
+              <Route path="assignments/new" element={<FacultyAssignments />} />
+              <Route path="live/start" element={<FacultyLive />} />
+              <Route path="schedule/:classId" element={<FacultySchedule />} />
             </Route>
 
             {/* --- STUDENT PORTAL (No Lockdown) --- */}
@@ -259,7 +295,7 @@ function App() {
             >
               <Route index element={<StudentDashboard />} />
               <Route path="dashboard" element={<StudentDashboard />} />
-              <Route path="my-courses" element={<MyCourses />} />
+              <Route path="my-courses" element={<StudentMyCourses />} />
               
               {/* Private Video Player Route */}
               <Route path="course/view/:courseId" element={<CourseView />} />
@@ -277,7 +313,9 @@ function App() {
       </main>
 
       {/* Footer: 
-          
+          - Player page par nahi
+          - Dashboard pages par nahi
+          - Student/Teacher ke liye baki sab jagah dikhega
       */}
       {shouldShowNavbarFooter && <Footer />}
     </div>
