@@ -29,294 +29,179 @@ import Settings from "./pages/Settings";
 import StudentDashboard from "./pages/StudentDashboard";
 import StudentMyCourses from "./pages/MyCourses";
 
-// Faculty Pages
+// Faculty Pages (Real Implementation Modules)
 import FacultyDashboard from "./pages/faculty/Dashboard";
 import FacultyMyCourses from "./pages/faculty/MyCourses";
 import FacultyStudents from "./pages/faculty/Students";
 import FacultyLive from "./pages/faculty/Live";
 import FacultyAssignments from "./pages/faculty/Assignments";
-import FacultyLectures from "./pages/faculty/Lectures";
-import FacultySchedule from "./pages/faculty/Schedule";
-import FacultyMessages from "./pages/faculty/Messages";
-import FacultyAnalytics from "./pages/faculty/Analytics";
-import FacultyResources from "./pages/faculty/Resources";
 import FacultyAttendance from "./pages/faculty/Attendance";
 import FacultyGrades from "./pages/faculty/Grades";
-import FacultySupport from "./pages/faculty/Support";
-import FacultySearch from "./pages/faculty/Search";
-import FacultyNotifications from "./pages/faculty/Notifications";
-import FacultyActivity from "./pages/faculty/Activity";
 import FacultySettings from "./pages/faculty/Settings";
+import FacultyAnalytics from "./pages/faculty/Analytics";
+import FacultySchedule from "./pages/faculty/Schedule";
+import FacultyMessages from "./pages/faculty/Messages";
+import FacultySupport from "./pages/faculty/Support";
+import FacultyNotes from "./pages/faculty/Notes";
+import FacultyActivity from "./pages/faculty/Activity";
+
+// Common Pages
 import CourseView from "./pages/CourseView"; 
 import LiveClasses from "./pages/LiveClasses";
 
 /**
- * AdminLockdownGuard: Sirf Admin ke liye lockdown
+ * AdminLockdownGuard: Admin ko unke dashboard ke bahar nahi jane deta
  */
 const AdminLockdownGuard = ({ children }) => {
   const { userProfile, loading } = useAuth();
   const location = useLocation();
   
-  if (loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-white text-red-600 font-black italic">
-        <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="tracking-widest uppercase text-[10px]">Verifying Access...</p>
-      </div>
-    );
-  }
+  if (loading) return <LoadingSpinner />;
   
-  // SIRF Admin ke liye lockdown
   if (userProfile?.role?.toLowerCase() === "admin") {
     const isAdminPath = location.pathname.startsWith("/admin");
-    
-    // Agar Admin hai aur Admin path par nahi hai, toh redirect to admin dashboard
-    if (!isAdminPath) {
-      return <Navigate to="/admin" replace />;
-    }
+    if (!isAdminPath) return <Navigate to="/admin" replace />;
   }
-  
   return children;
 };
 
 /**
- * ProtectedRoute: Yeh user login aur role verification handle karta hai.
+ * FacultyLockdownGuard: Teacher ko faculty area ke bahar jane se rokta hai
  */
-const ProtectedRoute = ({ children, roleRequired }) => {
-  const { user, userProfile, loading } = useAuth();
-  const location = useLocation();
-
-  if (loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-white text-red-600 font-black italic">
-        <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="tracking-widest uppercase text-[10px]">Verifying Access...</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    // Agar login nahi hai, toh login page par bhejein
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-  
-  // Case-insensitive role check
-  if (roleRequired && userProfile?.role?.toLowerCase() !== roleRequired.toLowerCase()) {
-    // Role mismatch hone par user ko unke sahi dashboard par bhejein
-    const defaultPaths = { 
-      admin: "/admin", 
-      teacher: "/faculty", 
-      student: "/student" 
-    };
-    const userRole = userProfile?.role?.toLowerCase();
-    return <Navigate to={defaultPaths[userRole] || "/login"} replace />;
-  }
-  
-  return children;
-};
-
-/**
- * PublicRoute: Agar user already login hai, toh unhe appropriate dashboard par redirect karega
- * SIRF Admin ke liye redirect, student/teacher ke liye nahi
- */
-const PublicRoute = ({ children }) => {
-  const { user, userProfile, loading } = useAuth();
-  const location = useLocation();
-
-  if (loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-white text-red-600 font-black italic">
-        <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="tracking-widest uppercase text-[10px]">Verifying Access...</p>
-      </div>
-    );
-  }
-
-  if (user && userProfile) {
-    const role = userProfile.role?.toLowerCase();
-    
-    // SIRF Admin ke liye redirect - Student/Teacher ko public pages par jaane dijiye
-    if (role === "admin") {
-      return <Navigate to="/admin" replace />;
-    }
-    
-    // Student ya Teacher hai toh public page access de do
-    // Unhe login hone ke baad bhi marketplace browse karne dijiye
-    return children;
-  }
-
-  return children;
-};
-
-function App() {
+const FacultyLockdownGuard = ({ children }) => {
+  const { userProfile, loading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const { userProfile } = useAuth();
 
-  // Global Navigation Guard: SIRF Admin ko public pages se rokne ke liye
   useEffect(() => {
-    if (userProfile?.role?.toLowerCase() === "admin") {
+    if (userProfile?.role?.toLowerCase() === "teacher") {
       const currentPath = location.pathname;
+      
+      // Allowed paths for teacher (Strict Lockdown)
       const allowedPaths = [
-        "/admin",
-        "/admin/dashboard",
-        "/admin/students", 
-        "/admin/teachers",
-        "/admin/courses",
-        "/admin/courses/manage/",
-        "/admin/payments",
-        "/admin/analytics",
-        "/admin/settings",
-        "/admin/live"
+        "/",                    // Home page
+        "/login",              // Login page
+        "/course/",            // Course details
+        "/category/",          // Category pages
+        "/faculty",            // Faculty base
       ];
       
-      // Check if current path is allowed for admin
       const isAllowed = allowedPaths.some(path => currentPath.startsWith(path));
       
-      // Agar admin hai aur allowed path par nahi hai, toh redirect to admin dashboard
-      if (!isAllowed && currentPath !== "/admin") {
-        navigate("/admin", { replace: true });
+      // Agar teacher admin ya student area mein jane ki koshish kare
+      if (!isAllowed) {
+        if (currentPath !== "/login" && currentPath !== "/") {
+          navigate("/faculty/dashboard", { replace: true });
+        }
       }
     }
   }, [location.pathname, userProfile, navigate]);
 
-  // Video Player page par Navbar aur Footer hide karne ke liye logic
-  const isPlayerPage = location.pathname.includes("/course/view/");
+  if (loading) return <LoadingSpinner />;
   
-  // Dashboard pages par Navbar aur Footer hide karein
+  return children;
+};
+
+const ProtectedRoute = ({ children, roleRequired }) => {
+  const { user, userProfile, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <LoadingSpinner />;
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
+  
+  if (roleRequired && userProfile?.role?.toLowerCase() !== roleRequired.toLowerCase()) {
+    const defaultPaths = { admin: "/admin", teacher: "/faculty", student: "/student" };
+    return <Navigate to={defaultPaths[userProfile?.role?.toLowerCase()] || "/login"} replace />;
+  }
+  return children;
+};
+
+const PublicRoute = ({ children }) => {
+  const { user, userProfile, loading } = useAuth();
+  if (loading) return <LoadingSpinner />;
+  if (user && userProfile?.role?.toLowerCase() === "admin") return <Navigate to="/admin" replace />;
+  return children;
+};
+
+const LoadingSpinner = () => (
+  <div className="h-screen flex flex-col items-center justify-center bg-white">
+    <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+    <p className="tracking-widest uppercase text-[10px] font-black text-slate-400">Verifying Permissions...</p>
+  </div>
+);
+
+function App() {
+  const location = useLocation();
+  
+  const isPlayerPage = location.pathname.includes("/course/view/");
   const isDashboardPage = location.pathname.startsWith("/admin") || 
                           location.pathname.startsWith("/faculty") || 
                           location.pathname.startsWith("/student");
 
-  // Agar player page ya dashboard page hai to navbar/footer hide karein
   const shouldShowNavbarFooter = !isPlayerPage && !isDashboardPage;
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      {/* Global Navbar: 
-          - Player page par nahi
-          - Dashboard pages par nahi
-          - Student/Teacher ke liye baki sab jagah dikhega
-      */}
       {shouldShowNavbarFooter && <GlobalNavbar />} 
 
       <main className="flex-1">
-        {/* Global Admin Lockdown Guard - Sirf Admin ke liye */}
+        {/* Enforce Double Guard System */}
         <AdminLockdownGuard>
-          <Routes>
-            {/* --- PUBLIC MARKETPLACE ROUTES --- */}
-            {/* Student/Teacher login hone ke baad bhi access kar sakte hain */}
-            <Route path="/" element={
-              <PublicRoute>
-                <Home />
-              </PublicRoute>
-            } />
-            
-            <Route path="/login" element={
-              <PublicRoute>
-                <Login />
-              </PublicRoute>
-            } />
-            
-            <Route path="/course/:courseId" element={
-              <PublicRoute>
-                <CourseDetails />
-              </PublicRoute>
-            } />
-            
-            <Route path="/category/:categoryName" element={
-              <PublicRoute>
-                <CategoryPage />
-              </PublicRoute>
-            } />
+          <FacultyLockdownGuard>
+            <Routes>
+              {/* --- PUBLIC ROUTES --- */}
+              <Route path="/" element={<PublicRoute><Home /></PublicRoute>} />
+              <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+              <Route path="/course/:courseId" element={<PublicRoute><CourseDetails /></PublicRoute>} />
+              <Route path="/category/:categoryName" element={<PublicRoute><CategoryPage /></PublicRoute>} />
 
-            {/* --- ADMIN PANEL (Restricted & Locked) --- */}
-            <Route 
-              path="/admin" 
-              element={
-                <ProtectedRoute roleRequired="admin">
-                  <AdminLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route index element={<Dashboard />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="students" element={<Students />} />
-              <Route path="teachers" element={<Teachers />} /> 
-              <Route path="courses" element={<Courses />} />
-              <Route path="courses/manage/:courseId" element={<ManageLectures />} />
-              <Route path="payments" element={<Payments />} />
-              <Route path="analytics" element={<Analytics />} />
-              <Route path="settings" element={<Settings />} />
-              <Route path="live" element={<LiveClasses />} />
-            </Route>
+              {/* --- ADMIN PANEL --- */}
+              <Route path="/admin" element={<ProtectedRoute roleRequired="admin"><AdminLayout /></ProtectedRoute>}>
+                <Route index element={<Dashboard />} />
+                <Route path="students" element={<Students />} />
+                <Route path="teachers" element={<Teachers />} /> 
+                <Route path="courses" element={<Courses />} />
+                <Route path="courses/manage/:courseId" element={<ManageLectures />} />
+                <Route path="payments" element={<Payments />} />
+                <Route path="analytics" element={<Analytics />} />
+                <Route path="settings" element={<Settings />} />
+                <Route path="live" element={<LiveClasses />} />
+              </Route>
 
-            {/* --- FACULTY HUB (No Lockdown) --- */}
-            <Route 
-              path="/faculty" 
-              element={
-                <ProtectedRoute roleRequired="teacher">
-                  <FacultyLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route index element={<FacultyDashboard />} />
-              <Route path="dashboard" element={<FacultyDashboard />} />
-              <Route path="courses" element={<FacultyMyCourses />} />
-              <Route path="students" element={<FacultyStudents />} />
-              <Route path="live" element={<FacultyLive />} />
-              <Route path="assignments" element={<FacultyAssignments />} />
-              <Route path="lectures" element={<FacultyLectures />} />
-              <Route path="schedule" element={<FacultySchedule />} />
-              <Route path="messages" element={<FacultyMessages />} />
-              <Route path="analytics" element={<FacultyAnalytics />} />
-              <Route path="resources" element={<FacultyResources />} />
-              <Route path="attendance" element={<FacultyAttendance />} />
-              <Route path="grades" element={<FacultyGrades />} />
-              <Route path="support" element={<FacultySupport />} />
-              <Route path="search" element={<FacultySearch />} />
-              <Route path="notifications" element={<FacultyNotifications />} />
-              <Route path="activity" element={<FacultyActivity />} />
-              <Route path="settings" element={<FacultySettings />} />
-              <Route path="courses/new" element={<FacultyMyCourses />} />
-              <Route path="assignments/new" element={<FacultyAssignments />} />
-              <Route path="live/start" element={<FacultyLive />} />
-              <Route path="schedule/:classId" element={<FacultySchedule />} />
-            </Route>
+              {/* --- FACULTY HUB (15+ Real Modules) --- */}
+              <Route path="/faculty" element={<ProtectedRoute roleRequired="teacher"><FacultyLayout /></ProtectedRoute>}>
+                <Route index element={<FacultyDashboard />} />
+                <Route path="dashboard" element={<FacultyDashboard />} />
+                <Route path="analytics" element={<FacultyAnalytics />} />
+                <Route path="courses" element={<FacultyMyCourses />} />
+                <Route path="assignments" element={<FacultyAssignments />} />
+                <Route path="notes" element={<FacultyNotes />} />
+                <Route path="grades" element={<FacultyGrades />} />
+                <Route path="live" element={<FacultyLive />} />
+                <Route path="attendance" element={<FacultyAttendance />} />
+                <Route path="schedule" element={<FacultySchedule />} />
+                <Route path="messages" element={<FacultyMessages />} />
+                <Route path="students" element={<FacultyStudents />} />
+                <Route path="activity" element={<FacultyActivity />} />
+                <Route path="support" element={<FacultySupport />} />
+                <Route path="settings" element={<FacultySettings />} />
+              </Route>
 
-            {/* --- STUDENT PORTAL (No Lockdown) --- */}
-            <Route 
-              path="/student" 
-              element={
-                <ProtectedRoute roleRequired="student">
-                  <StudentLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route index element={<StudentDashboard />} />
-              <Route path="dashboard" element={<StudentDashboard />} />
-              <Route path="my-courses" element={<StudentMyCourses />} />
-              
-              {/* Private Video Player Route */}
-              <Route path="course/view/:courseId" element={<CourseView />} />
-              <Route path="live" element={<LiveClasses />} />
-            </Route>
+              {/* --- STUDENT PORTAL --- */}
+              <Route path="/student" element={<ProtectedRoute roleRequired="student"><StudentLayout /></ProtectedRoute>}>
+                <Route index element={<StudentDashboard />} />
+                <Route path="dashboard" element={<StudentDashboard />} />
+                <Route path="my-courses" element={<StudentMyCourses />} />
+                <Route path="course/view/:courseId" element={<CourseView />} />
+                <Route path="live" element={<LiveClasses />} />
+              </Route>
 
-            {/* Catch all route - Admin ko admin area mein hi redirect karega */}
-            <Route path="*" element={
-              userProfile?.role?.toLowerCase() === "admin" ? 
-                <Navigate to="/admin" replace /> : 
-                <Navigate to="/" replace />
-            } />
-          </Routes>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </FacultyLockdownGuard>
         </AdminLockdownGuard>
       </main>
 
-      {/* Footer: 
-          - Player page par nahi
-          - Dashboard pages par nahi
-          - Student/Teacher ke liye baki sab jagah dikhega
-      */}
       {shouldShowNavbarFooter && <Footer />}
     </div>
   );

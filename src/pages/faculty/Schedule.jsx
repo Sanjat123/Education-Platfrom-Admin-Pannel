@@ -1,182 +1,130 @@
-import React, { useState } from "react";
-import { motion } from "framer-motion";
-import { 
-  FiCalendar, FiClock, FiMapPin, FiUsers,
-  FiChevronLeft, FiChevronRight, FiPlus
-} from "react-icons/fi";
+import React, { useState, useEffect } from "react";
+import { db } from "../../firebase";
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy } from "firebase/firestore";
+import { useAuth } from "../../context/AuthContext";
+import { FiCalendar, FiClock, FiPlus, FiMapPin, FiVideo, FiMoreVertical, FiCheckCircle } from "react-icons/fi";
+import toast, { Toaster } from "react-hot-toast";
 
-const Schedule = () => {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [view, setView] = useState("week"); // 'day', 'week', 'month'
+const FacultySchedule = () => {
+  const { userProfile } = useAuth();
+  const [events, setEvents] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [formData, setFormData] = useState({ title: "", day: "Monday", time: "", type: "Live Class", courseId: "" });
 
-  const scheduleData = [
-    { 
-      id: 1, 
-      title: "React Advanced Patterns", 
-      time: "10:00 AM - 12:00 PM", 
-      type: "Lecture", 
-      batch: "Full Stack",
-      room: "Lab 101",
-      color: "bg-blue-100 text-blue-700"
-    },
-    { 
-      id: 2, 
-      title: "Database Design Workshop", 
-      time: "02:00 PM - 04:00 PM", 
-      type: "Workshop", 
-      batch: "Data Science",
-      room: "Room 205",
-      color: "bg-emerald-100 text-emerald-700"
-    },
-    { 
-      id: 3, 
-      title: "Project Review", 
-      time: "04:30 PM - 06:00 PM", 
-      type: "Meeting", 
-      batch: "UI/UX Design",
-      room: "Conference Room",
-      color: "bg-amber-100 text-amber-700"
-    },
-  ];
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const hours = Array.from({ length: 12 }, (_, i) => `${i + 8}:00 ${i < 4 ? 'AM' : 'PM'}`);
+  useEffect(() => {
+    if (!userProfile?.uid) return;
+
+    // Fetch Courses for selection
+    const qCourses = query(collection(db, "courses"), where("instructorId", "==", userProfile.uid));
+    const unsubCourses = onSnapshot(qCourses, (snap) => {
+      setCourses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    // Fetch Scheduled Events
+    const qEvents = query(collection(db, "schedules"), where("instructorId", "==", userProfile.uid), orderBy("createdAt", "desc"));
+    const unsubEvents = onSnapshot(qEvents, (snap) => {
+      setEvents(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => { unsubCourses(); unsubEvents(); };
+  }, [userProfile]);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    try {
+      await addDoc(collection(db, "schedules"), {
+        ...formData,
+        instructorId: userProfile.uid,
+        createdAt: serverTimestamp()
+      });
+      toast.success("Schedule Updated!");
+      setShowAdd(false);
+    } catch (err) {
+      toast.error("Failed to add schedule");
+    }
+  };
 
   return (
-    <div className="p-4 md:p-8 space-y-8 animate-auth-entry">
-      {/* Header */}
-      <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tighter uppercase">
-              Schedule
-            </h1>
-            <p className="text-slate-400 text-xs md:text-[10px] font-black tracking-[0.3em] uppercase mt-1">
-              Manage Your Calendar
-            </p>
-          </div>
-          
-          <div className="flex flex-wrap gap-4">
-            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl">
-              {['day', 'week', 'month'].map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-                >
-                  {v.charAt(0).toUpperCase() + v.slice(1)}
-                </button>
-              ))}
+    <div className="p-4 md:p-10 space-y-10">
+      <Toaster />
+      
+      {/* Dynamic Header */}
+      <div className="bg-slate-900 p-12 rounded-[3.5rem] text-white flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+        <div className="relative z-10">
+          <h1 className="text-3xl font-black uppercase italic tracking-tighter">Academic <span className="text-emerald-500">Timeline</span></h1>
+          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.3em] mt-2 italic">Organize your teaching hours & sessions</p>
+        </div>
+        <button onClick={() => setShowAdd(true)} className="relative z-10 bg-emerald-600 hover:bg-white hover:text-emerald-600 text-white px-10 py-5 rounded-3xl font-black text-[11px] uppercase tracking-widest transition-all shadow-2xl">
+          <FiPlus className="inline mr-2" /> Add Session
+        </button>
+        <FiCalendar className="absolute -bottom-10 -right-10 text-[15rem] text-white/5 -rotate-12" />
+      </div>
+
+      {/* Weekly Planner Grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-6 gap-6">
+        {days.map((day) => (
+          <div key={day} className="space-y-4">
+            <div className="bg-white p-5 rounded-3xl border border-slate-100 text-center shadow-sm">
+              <p className="font-black text-[11px] uppercase tracking-[0.2em] text-slate-400">{day}</p>
             </div>
             
-            <button className="bg-slate-900 text-white px-4 py-2 md:px-6 md:py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-sky-600 transition-all shadow-xl active:scale-95">
-              <FiPlus /> Add Event
-            </button>
+            <div className="space-y-4">
+              {events.filter(e => e.day === day).length > 0 ? (
+                events.filter(e => e.day === day).map((session) => (
+                  <div key={session.id} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-emerald-200 transition-all group">
+                    <div className="flex justify-between items-start mb-4">
+                       <span className={`p-2 rounded-xl text-xs ${session.type === 'Live Class' ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-blue-500'}`}>
+                         {session.type === 'Live Class' ? <FiVideo /> : <FiClock />}
+                       </span>
+                       <FiMoreVertical className="text-slate-300" />
+                    </div>
+                    <h4 className="font-black text-slate-900 text-[11px] uppercase leading-tight">{session.title}</h4>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase mt-2 flex items-center gap-1">
+                      <FiClock className="text-emerald-500" /> {session.time}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="py-10 border-2 border-dashed border-slate-50 rounded-[2rem] flex flex-col items-center opacity-30">
+                  <FiCheckCircle className="text-2xl text-slate-200" />
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Session Modal */}
+      {showAdd && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+          <div className="bg-white w-full max-w-lg rounded-[3.5rem] p-12 shadow-2xl">
+            <h2 className="text-2xl font-black uppercase mb-8 italic">Plan <span className="text-emerald-600">Session</span></h2>
+            <form onSubmit={handleAdd} className="space-y-4">
+              <input type="text" placeholder="Session Title (e.g. Intro to Node.js)" className="w-full bg-slate-50 p-5 rounded-2xl outline-none font-bold placeholder:text-slate-300 border border-slate-100" onChange={(e) => setFormData({...formData, title: e.target.value})} required />
+              <div className="grid grid-cols-2 gap-4">
+                <select className="bg-slate-50 p-5 rounded-2xl outline-none font-bold text-[10px] uppercase border border-slate-100" onChange={(e) => setFormData({...formData, day: e.target.value})}>
+                  {days.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <input type="time" className="bg-slate-50 p-5 rounded-2xl outline-none font-bold border border-slate-100" onChange={(e) => setFormData({...formData, time: e.target.value})} required />
+              </div>
+              <select className="w-full bg-slate-50 p-5 rounded-2xl outline-none font-bold text-[10px] uppercase border border-slate-100" onChange={(e) => setFormData({...formData, type: e.target.value})}>
+                <option value="Live Class">Live Studio Session</option>
+                <option value="Mentorship">1:1 Mentorship</option>
+                <option value="Doubt Clearing">Doubt Clearing</option>
+              </select>
+              <div className="flex gap-4 pt-4">
+                <button type="submit" className="flex-1 bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 transition-all">Add to Schedule</button>
+                <button type="button" onClick={() => setShowAdd(false)} className="px-8 text-slate-400 font-black uppercase text-[10px]">Close</button>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
-
-      {/* Calendar Controls */}
-      <div className="bg-white p-4 md:p-6 rounded-[2rem] border border-slate-100">
-        <div className="flex items-center justify-between mb-6">
-          <button className="p-2 hover:bg-slate-50 rounded-xl">
-            <FiChevronLeft size={20} />
-          </button>
-          
-          <h2 className="text-xl font-black text-slate-900">
-            {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-          </h2>
-          
-          <button className="p-2 hover:bg-slate-50 rounded-xl">
-            <FiChevronRight size={20} />
-          </button>
-        </div>
-
-        {/* Week View */}
-        <div className="grid grid-cols-7 gap-2 mb-2">
-          {days.map(day => (
-            <div key={day} className="text-center p-3">
-              <div className="text-xs font-bold text-slate-500 uppercase">{day}</div>
-              <div className={`text-lg font-black mt-1 ${day === 'Wed' ? 'bg-sky-100 text-sky-700 w-10 h-10 flex items-center justify-center rounded-full mx-auto' : 'text-slate-900'}`}>
-                {15 + days.indexOf(day)}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Time Grid */}
-        <div className="relative min-h-[600px]">
-          {hours.map(hour => (
-            <div key={hour} className="flex border-t border-slate-100">
-              <div className="w-20 p-3 text-xs text-slate-500 font-bold">{hour}</div>
-              <div className="flex-1 grid grid-cols-7">
-                {days.map(day => (
-                  <div key={`${hour}-${day}`} className="border-l border-slate-100 min-h-[80px]"></div>
-                ))}
-              </div>
-            </div>
-          ))}
-          
-          {/* Schedule Events */}
-          {scheduleData.map(event => (
-            <motion.div
-              key={event.id}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className={`absolute left-20 right-4 ${event.color} p-3 rounded-xl shadow-sm border`}
-              style={{ 
-                top: '160px', // Based on time
-                height: '120px' // Based on duration
-              }}
-            >
-              <div className="font-bold text-sm mb-1">{event.title}</div>
-              <div className="text-xs opacity-75 mb-2">{event.time}</div>
-              <div className="flex items-center gap-2 text-xs">
-                <FiUsers size={12} />
-                <span>{event.batch}</span>
-                <FiMapPin className="ml-2" size={12} />
-                <span>{event.room}</span>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      {/* Upcoming Events */}
-      <div className="bg-white p-6 rounded-[2rem] border border-slate-100">
-        <h3 className="text-lg font-black text-slate-900 mb-4">Today's Schedule</h3>
-        
-        <div className="space-y-4">
-          {scheduleData.map(event => (
-            <div key={event.id} className="flex items-center p-4 bg-slate-50 rounded-xl">
-              <div className={`w-12 h-12 rounded-xl ${event.color} flex items-center justify-center mr-4`}>
-                <FiCalendar />
-              </div>
-              
-              <div className="flex-1">
-                <h4 className="font-bold text-slate-900">{event.title}</h4>
-                <div className="flex items-center gap-4 text-sm text-slate-600">
-                  <span className="flex items-center gap-1">
-                    <FiClock size={12} /> {event.time}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <FiUsers size={12} /> {event.batch}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <FiMapPin size={12} /> {event.room}
-                  </span>
-                </div>
-              </div>
-              
-              <button className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-sky-600 transition-all">
-                Join
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
 };
 
-export default Schedule;
+export default FacultySchedule;

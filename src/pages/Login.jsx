@@ -40,6 +40,7 @@ const Login = () => {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
   
   // Registration form states
   const [fullName, setFullName] = useState("");
@@ -62,6 +63,7 @@ const Login = () => {
   const [forgotPassword, setForgotPassword] = useState(false);
   const [loginMode, setLoginMode] = useState("login");
   const [socialUserData, setSocialUserData] = useState(null);
+  const [loginAttempts, setLoginAttempts] = useState(0);
   
   const navigate = useNavigate();
 
@@ -400,33 +402,142 @@ const Login = () => {
     setLoading(true);
     
     try {
-      if (!email || !password) {
-        throw new Error("Please enter both email and password");
+      // Validate inputs
+      if (!email || !email.trim()) {
+        toast.error("Please enter your email address");
+        setLoading(false);
+        return;
       }
-
-      const userCred = await signInWithEmailAndPassword(auth, email, password);
       
-      // ✅ FIX ADDED HERE: Admin bypass aur status check
+      if (!password) {
+        toast.error("Please enter your password");
+        setLoading(false);
+        return;
+      }
+      
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.toLowerCase())) {
+        toast.error("Please enter a valid email address");
+        setLoading(false);
+        return;
+      }
+      
+      // Password length validation
+      if (password.length < 6) {
+        toast.error("Password must be at least 6 characters long");
+        setLoading(false);
+        return;
+      }
+      
+      // Normalize email to lowercase
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Optional: Rate limiting check
+      const storedAttempts = localStorage.getItem("loginAttempts");
+      const lastAttemptTime = localStorage.getItem("lastLoginAttempt");
+      
+      if (storedAttempts && lastAttemptTime) {
+        const attempts = parseInt(storedAttempts);
+        const timeSinceLast = Date.now() - parseInt(lastAttemptTime);
+        
+        if (attempts >= 5 && timeSinceLast < 15 * 60 * 1000) {
+          toast.error("Too many failed attempts. Please try again in 15 minutes.");
+          setLoading(false);
+          return;
+        }
+        
+        // Reset if cooldown period has passed
+        if (timeSinceLast >= 15 * 60 * 1000) {
+          localStorage.removeItem("loginAttempts");
+          localStorage.removeItem("lastLoginAttempt");
+        }
+      }
+      
+      // Attempt login
+      const userCred = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      
+      // ✅ Enhanced login handling with role verification
       await handleSuccessfulLogin(userCred.user, "email");
+      
+      // ✅ Clear sensitive data from state
+      setEmail("");
+      setPassword("");
+      setRememberMe(false);
+      
+      // Reset failed attempts on successful login
+      localStorage.removeItem("loginAttempts");
+      localStorage.removeItem("lastLoginAttempt");
       
     } catch (err) {
       console.error("Login error:", err);
       
-      if (err.code === "auth/user-not-found") {
-        if (selectedRole === "student") {
-          toast.error("No account found. Please register first.");
-          setLoginMode("register");
-          setStudentEmail(email);
-        } else {
-          toast.error("No account found with this email");
-        }
-      } else if (err.code === "auth/wrong-password") {
-        toast.error("Incorrect password");
-      } else if (err.code === "auth/too-many-requests") {
-        toast.error("Too many failed attempts. Try again later.");
-      } else {
-        toast.error(err.message || "Login failed");
+      // Track failed attempts
+      const currentAttempts = localStorage.getItem("loginAttempts") || "0";
+      const newAttempts = parseInt(currentAttempts) + 1;
+      localStorage.setItem("loginAttempts", newAttempts.toString());
+      localStorage.setItem("lastLoginAttempt", Date.now().toString());
+      
+      // Handle specific Firebase auth errors
+      switch (err.code) {
+        case "auth/invalid-email":
+          toast.error("Please enter a valid email address");
+          break;
+          
+        case "auth/user-not-found":
+          if (selectedRole === "student") {
+            toast.error("No account found. Would you like to register instead?");
+            setLoginMode("register");
+            setStudentEmail(email);
+          } else if (selectedRole === "teacher") {
+            toast.error("Teacher account not found. Please contact administrator.");
+          } else {
+            toast.error("No account found with this email");
+          }
+          break;
+          
+        case "auth/wrong-password":
+          toast.error("Incorrect password. Please try again.");
+          break;
+          
+        case "auth/user-disabled":
+          toast.error("This account has been disabled. Please contact support.");
+          break;
+          
+        case "auth/too-many-requests":
+          toast.error("Too many failed attempts. Please try again later.");
+          break;
+          
+        case "auth/network-request-failed":
+          toast.error("Network error. Please check your internet connection.");
+          break;
+          
+        case "auth/invalid-credential":
+          toast.error("Invalid email or password. Please check your credentials.");
+          break;
+          
+        case "auth/operation-not-allowed":
+          toast.error("Email/password login is not enabled. Contact administrator.");
+          break;
+          
+        case "auth/requires-recent-login":
+          toast.error("Session expired. Please login again.");
+          break;
+          
+        default:
+          const errorMessage = err.message || "Login failed. Please try again.";
+          toast.error(errorMessage);
       }
+      
+      // Optional: Track failed login attempts
+      if (err.code && err.code.startsWith("auth/")) {
+        console.warn(`Login attempt failed: ${err.code}`, {
+          email: email?.substring(0, 5) + "***", // Log partial email for privacy
+          role: selectedRole,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
     } finally {
       setLoading(false);
     }
@@ -1136,6 +1247,7 @@ const Login = () => {
                           type="email" 
                           required
                           placeholder="you@example.com"
+                          autoComplete="email"
                           className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-red-600/30 font-medium"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
@@ -1298,6 +1410,7 @@ const Login = () => {
                                 type="text"
                                 required
                                 placeholder="John Doe"
+                                autoComplete="name"
                                 className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                 value={fullName}
                                 onChange={(e) => setFullName(e.target.value)}
@@ -1315,6 +1428,7 @@ const Login = () => {
                                   required
                                   disabled={loginMode === "complete-profile"}
                                   placeholder="student@example.com"
+                                  autoComplete="email"
                                   className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium ${loginMode === "complete-profile" ? 'opacity-70' : ''}`}
                                   value={loginMode === "complete-profile" ? socialUserData?.email || studentEmail : studentEmail}
                                   onChange={(e) => setStudentEmail(e.target.value)}
@@ -1334,6 +1448,7 @@ const Login = () => {
                                   required={loginMode === "register"}
                                   maxLength={10}
                                   placeholder="9876543210"
+                                  autoComplete="tel"
                                   className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-16 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={studentPhone}
                                   onChange={(e) => {
@@ -1352,6 +1467,7 @@ const Login = () => {
                               <div className="relative">
                                 <input 
                                   type="date"
+                                  autoComplete="bday"
                                   className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={dateOfBirth}
                                   onChange={(e) => setDateOfBirth(e.target.value)}
@@ -1382,6 +1498,7 @@ const Login = () => {
                               <textarea 
                                 placeholder="Enter your complete address"
                                 rows="2"
+                                autoComplete="street-address"
                                 className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none focus:border-blue-500/30 font-medium resize-none"
                                 value={address}
                                 onChange={(e) => setAddress(e.target.value)}
@@ -1444,6 +1561,7 @@ const Login = () => {
                                     type={showPassword ? "text" : "password"}
                                     required
                                     placeholder="Minimum 6 characters"
+                                    autoComplete="new-password"
                                     className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 pr-12 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
@@ -1656,6 +1774,7 @@ const Login = () => {
                                   required
                                   maxLength={10}
                                   placeholder="9876543210"
+                                  autoComplete="tel"
                                   className="w-full bg-slate-50 border-2 border-slate-100 p-3 pl-20 rounded-xl outline-none focus:border-blue-500/30 font-medium"
                                   value={phone}
                                   onChange={(e) => {
@@ -1683,6 +1802,7 @@ const Login = () => {
                                     selectedRole === 'teacher' ? "faculty@studentnagari.edu" :
                                     "student@example.com"
                                   }
+                                  autoComplete="email"
                                   className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 rounded-xl outline-none font-medium ${
                                     selectedRole === 'admin' ? 'focus:border-slate-900/30' :
                                     selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
@@ -1704,6 +1824,7 @@ const Login = () => {
                                   type={showPassword ? "text" : "password"}
                                   required
                                   placeholder="Enter your password"
+                                  autoComplete={selectedRole === 'student' && loginMode === 'register' ? 'new-password' : 'current-password'}
                                   className={`w-full bg-slate-50 border-2 border-slate-100 p-3 pl-12 pr-12 rounded-xl outline-none font-medium ${
                                     selectedRole === 'admin' ? 'focus:border-slate-900/30' :
                                     selectedRole === 'teacher' ? 'focus:border-emerald-500/30' :
